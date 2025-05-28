@@ -18,3 +18,5 @@ mar20
 zheyu
 v5
 memory-bank
+*.pt
+*.pth
