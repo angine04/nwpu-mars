@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     MarsEngine(
         mode=mode,
-        cfgname="czy.nano.full",
+        cfgname="v5.nano.full",
         # cfgname="c1.nano.full.cuda@3",
         # cfgname="c1.nano.teacher",
         # cfgname="c1.nano.distillation",
