@@ -135,7 +135,8 @@ class DetectionLoss(object):
 
         # Decode to xyxy boxes: bboxDecode(anchor_centers_abs, ltrb_offsets_abs)
         # anchor_points are absolute centers (total_anchors, 2). Need to expand for batch.
-        pred_bboxes_decoded_xyxy = bboxDecode(anchor_points.unsqueeze(0), pred_offsets_abs) # (B, total_anchors, 4)
+        # pred_offsets_abs is already the ltrb distances. Call dist2bbox directly.
+        pred_bboxes_decoded_xyxy = dist2bbox(pred_offsets_abs, anchor_points.unsqueeze(0), xywh=False) # (B, total_anchors, 4)
 
         # Target assignment using TaskAlignedAssigner
         target_labels, target_bboxes, target_scores, fg_mask, _ = self.assigner(
