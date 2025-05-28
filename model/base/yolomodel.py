@@ -82,24 +82,39 @@ class YoloModel(nn.Module):
     def unfreezeBackbone(self):
         raise NotImplementedError("YoloModel::unfreezeBackbone")
 
-    def forward(self, x):
-        if self.inferenceMode:
+    def forward(self, x, output_features=False):
+        # If in inference mode AND not asked for features, run with no_grad and return only head outputs.
+        if self.inferenceMode and not output_features:
             with torch.no_grad():
-                return self.forwardInternal(x)
-        return self.forwardInternal(x)
+                # Call forwardInternal, which will return only head outputs if output_features is False
+                return self.forwardInternal(x, output_features=False)
+        # Otherwise (training, or inference but features are requested for teacher model), run normally.
+        return self.forwardInternal(x, output_features=output_features)
 
-    def forwardInternal(self, x):
+    def forwardInternal(self, x, output_features=False):
         """
         Input shape: (B, 3, 640, 640)
         Output shape:
-            xo: (B, nc + regMax * 4, 80, 80)
-            yo: (B, nc + regMax * 4, 40, 40)
-            zo: (B, nc + regMax * 4, 20, 20)
+            If output_features is False (default):
+                xo: (B, nc + regMax * 4, 80, 80)
+                yo: (B, nc + regMax * 4, 40, 40)
+                zo: (B, nc + regMax * 4, 20, 20)
+            If output_features is True:
+                A tuple: ( (xo,yo,zo), (bb_feat0, bb_feat1, bb_feat2, bb_feat3), (neck_C, neck_X, neck_Y, neck_Z) )
+                More precisely: ( (head_outs), (backbone_features), (neck_features) )
+                Or flattened for DistillationDetectionLoss: (xo, yo, zo, bb_f0, bb_f1, bb_f2, bb_f3, neck_C, neck_X, neck_Y, neck_Z)
         """
-        _, feat1, feat2, feat3 = self.backbone.forward(x)
-        _, X, Y, Z = self.neck.forward(feat1, feat2, feat3)
-        xo, yo, zo = self.head.forward(X, Y, Z)
-        return xo, yo, zo
+        bb_feat0, bb_feat1, bb_feat2, bb_feat3 = self.backbone.forward(x)
+        # neck_C is p4_fused, neck_X is p3_out, neck_Y is p4_out, neck_Z is p5_out
+        neck_C, neck_X, neck_Y, neck_Z = self.neck.forward(bb_feat1, bb_feat2, bb_feat3)
+        xo, yo, zo = self.head.forward(neck_X, neck_Y, neck_Z)
+
+        if output_features:
+            # This flattened tuple structure matches what YoloStudentModel provides
+            # and what DistillationDetectionLoss expects for student/teacher outputs.
+            return (xo, yo, zo, bb_feat0, bb_feat1, bb_feat2, bb_feat3, neck_C, neck_X, neck_Y, neck_Z)
+        else:
+            return xo, yo, zo
 
     def save(self, modelFile, verbose=False):
         torch.save(self.state_dict(), modelFile)

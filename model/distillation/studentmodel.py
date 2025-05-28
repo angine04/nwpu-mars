@@ -29,7 +29,7 @@ class YoloStudentModel(YoloModel):
         feat0, feat1, feat2, feat3 = self.backbone.forward(x)
         C, X, Y, Z = self.neck.forward(feat1, feat2, feat3)
         xo, yo, zo = self.head.forward(X, Y, Z)
-        tlayerOutput = self.teacherModel.forward(x)
+        tlayerOutput = self.teacherModel.forward(x, output_features=True)
         return (xo, yo, zo, feat0, feat1, feat2, feat3, C, X, Y, Z), tlayerOutput
 
     @override
