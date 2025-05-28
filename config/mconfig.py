@@ -8,8 +8,13 @@ class ModelConfig(object):
 
         self.user = None
         self.seed = 859
-        self.cuda = torch.cuda.is_available()
-        self.device = torch.device("cuda" if self.cuda else "cpu")
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda:0") # Default to cuda:0 if multiple GPUs
+        else:
+            self.device = torch.device("cpu")
+        self.cuda = self.device.type == 'cuda' # Keep self.cuda for compatibility if needed elsewhere
 
         # data setup
         self.imageDir = None
@@ -74,10 +79,16 @@ class ModelConfig(object):
             match tokens[0]:
                 case "cuda":
                     self.device = torch.device("cuda:{}".format(tokens[1]))
+                case "mps":
+                    if torch.backends.mps.is_available():
+                        self.device = torch.device("mps")
+                    else:
+                        print("Warning: MPS tag specified, but MPS is not available. Falling back to CPU.")
+                        self.device = torch.device("cpu")
                 case "batch":
                     self.batchSize = int(tokens[1])
                 case "phase":
-                    self.phase = int(tokens[1])
+                    self.phase = tokens[1]  # Allow string phases like 'nano'
         return self
 
     def finalize(self, tags):
