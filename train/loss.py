@@ -1,7 +1,8 @@
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from misc.bbox import bboxDecode, iou, bbox2dist
+from misc.bbox import bboxDecode, iou, bbox2dist, dist2bbox
 from train.tal import TaskAlignedAssigner
 
 
@@ -140,8 +141,8 @@ class DetectionLoss(object):
 
         # Target assignment using TaskAlignedAssigner
         target_labels, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            predClassScores.detach(),
-            pred_bboxes_decoded_xyxy.detach(),
+            predClassScores,
+            pred_bboxes_decoded_xyxy,
             anchor_points,
             gtLabels,
             gtBboxes,
