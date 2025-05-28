@@ -107,9 +107,113 @@ class DetectionLoss(object):
         gtLabels, gtBboxes = targets.split((1, 4), 2)  # cls=(batchSize, maxCount, 1), xyxy=(batchSize, maxCount, 4)
         gtMask = gtBboxes.sum(2, keepdim=True).gt_(0.0)
 
-        raise NotImplementedError("DetectionLoss::__call__")
+        # Generate anchor points and stride tensor
+        anchor_points_list = []
+        stride_tensor_list = []
+        for i, stride_val in enumerate(self.layerStrides):
+            h, w = preds[i].shape[-2:]
+            grid_y, grid_x = torch.meshgrid(torch.arange(h, device=self.mcfg.device, dtype=torch.float32),
+                                            torch.arange(w, device=self.mcfg.device, dtype=torch.float32), indexing='ij')
+            # cell centers (x, y)
+            level_anchor_points = torch.stack((grid_x + 0.5, grid_y + 0.5), dim=-1).view(-1, 2)
+            anchor_points_list.append(level_anchor_points * stride_val)
+            stride_tensor_list.append(torch.full((h * w, 1), stride_val, dtype=torch.float32, device=self.mcfg.device))
 
-        loss[0] *= self.mcfg.lossWeights[0]  # box
+        anchor_points = torch.cat(anchor_points_list, dim=0)  # (total_anchors, 2)
+        stride_tensor = torch.cat(stride_tensor_list, dim=0) # (total_anchors, 1)
+
+        # Decode predicted bounding boxes
+        # predBoxDistribution is (batchSize, total_anchors, 4 * regMax)
+        pred_dist_rs = predBoxDistribution.view(batchSize, -1, 4, self.mcfg.regMax)
+        pred_dist_sm = F.softmax(pred_dist_rs, dim=-1)
+        # Integral of distribution (expectation)
+        integ_arange = torch.arange(self.mcfg.regMax, device=self.mcfg.device, dtype=torch.float32)
+        pred_offsets_grid_units = (pred_dist_sm * integ_arange).sum(dim=-1) # (batchSize, total_anchors, 4) in ltrb format (grid cell units)
+
+        # Scale offsets by stride to get absolute distances
+        pred_offsets_abs = pred_offsets_grid_units * stride_tensor.unsqueeze(0) # (B, total_anchors, 4)
+
+        # Decode to xyxy boxes: bboxDecode(anchor_centers_abs, ltrb_offsets_abs)
+        # anchor_points are absolute centers (total_anchors, 2). Need to expand for batch.
+        pred_bboxes_decoded_xyxy = bboxDecode(anchor_points.unsqueeze(0), pred_offsets_abs) # (B, total_anchors, 4)
+
+        # Target assignment using TaskAlignedAssigner
+        target_labels, target_bboxes, target_scores, fg_mask, _ = self.assigner(
+            predClassScores.detach(),
+            pred_bboxes_decoded_xyxy.detach(),
+            anchor_points,
+            gtLabels,
+            gtBboxes,
+            gtMask
+        )
+
+        # Classification loss (BCEWithLogitsLoss)
+        # target_scores from assigner are soft labels (alignment_metric * one_hot_gt_label)
+        cls_loss_unreduced = self.bce(predClassScores, target_scores) # (B, total_anchors, nc)
+        
+        # Normalize by sum of positive target scores
+        # fg_mask is (B, total_anchors). target_scores is (B, total_anchors, nc)
+        # We want to sum the loss for entries where fg_mask is true.
+        # The normalization factor is the sum of target_scores for positive anchors.
+        # Ultralytics normalizes by target_scores[fg_mask].sum()
+        
+        # Sum loss over classes, apply fg_mask, then sum over anchors and batch
+        # Normalization factor: sum of all elements in target_scores where fg_mask is true.
+        # This means sum(target_scores[fg_mask]) where target_scores[fg_mask] has shape (N_fg, nc)
+        # So, effectively sum of all alignment scores for positive matches.
+        
+        # Simpler: sum the loss where fg_mask is true, normalize by number of positive anchors (fg_mask.sum())
+        # Or, as per many TAL implementations, normalize by sum of target_scores[fg_mask]
+        
+        # Let's use the sum of target_scores over positive anchors for normalization
+        # target_scores_sum_for_norm = target_scores[fg_mask].sum()
+        # This is slightly different from how BboxLoss expects its target_scores_sum.
+        # For cls loss, often normalized by number of positives or sum of target_scores over positives.
+        
+        # Following a common pattern for TAL: sum cls_loss where fg_mask is true, normalize by sum of target_scores[fg_mask]
+        # This means target_scores[fg_mask] is (N_fg, num_classes). Sum of these elements is the normalizer.
+        normalizer_cls = target_scores[fg_mask].sum()
+        if normalizer_cls > 0:
+            loss_cls = (cls_loss_unreduced.sum(dim=-1)[fg_mask]).sum() / normalizer_cls
+        else:
+            loss_cls = torch.tensor(0.0, device=self.mcfg.device)
+
+        # Bounding box losses (IoU + DFL)
+        loss_iou = torch.tensor(0.0, device=self.mcfg.device)
+        loss_dfl = torch.tensor(0.0, device=self.mcfg.device)
+
+        if fg_mask.sum() > 0:
+            # Select foreground predictions and targets for bbox loss calculation
+            pred_dist_fg = predBoxDistribution[fg_mask]                   # (N_fg, 4 * reg_max)
+            pred_bboxes_fg = pred_bboxes_decoded_xyxy[fg_mask]            # (N_fg, 4)
+            anchor_points_fg = anchor_points.unsqueeze(0).expand(batchSize, -1, -1)[fg_mask] # (N_fg, 2)
+            target_bboxes_fg = target_bboxes[fg_mask]                     # (N_fg, 4)
+
+            # For BboxLoss, target_scores should be a per-anchor weight (e.g., alignment score)
+            # target_scores from assigner is (B, total_anchors, nc). We need (N_fg, 1).
+            # Use the max score of the assigned class for positive anchors.
+            bbox_loss_weights_fg = target_scores[fg_mask].max(dim=-1, keepdim=True)[0] # (N_fg, 1)
+            bbox_loss_weights_sum = bbox_loss_weights_fg.sum()
+
+            if bbox_loss_weights_sum > 0:
+                # The fg_mask argument to BboxLoss is for further filtering if needed, here it's all true for the subset
+                loss_iou_val, loss_dfl_val = self.bboxLoss(
+                    pred_dist_fg,
+                    pred_bboxes_fg,
+                    anchor_points_fg,
+                    target_bboxes_fg,
+                    bbox_loss_weights_fg,    # Weights for each positive sample's loss
+                    bbox_loss_weights_sum,   # Normalization factor for the sum of weighted losses
+                    torch.ones_like(bbox_loss_weights_fg, dtype=torch.bool).squeeze(-1) # fg_mask for BboxLoss (all true for this subset)
+                )
+                loss_iou = loss_iou_val
+                loss_dfl = loss_dfl_val
+
+        loss[0] = loss_iou
+        loss[1] = loss_cls
+        loss[2] = loss_dfl
+
+        loss[0] *= self.mcfg.lossWeights[0]  # box (IoU)
         loss[1] *= self.mcfg.lossWeights[1]  # cls
         loss[2] *= self.mcfg.lossWeights[2]  # dfl
 
