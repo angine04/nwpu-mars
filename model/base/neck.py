@@ -74,7 +74,9 @@ class Neck(nn.Module):
             feat3_p5: Backbone P5 features (e.g., B, C3, H/32, W/32)
 
         Returns:
-            (p3_out, p4_out, p5_out): Tuple of fused feature maps for the Head.
+            (p4_fused, p3_out, p4_out, p5_out): Tuple of feature maps. 
+            p4_fused: Output of the first C2f block in top-down path.
+            p3_out, p4_out, p5_out: Fused feature maps for the Head.
                 p3_out: Features from Neck Layer 15 (e.g., B, 256*w, H/8, W/8)
                 p4_out: Features from Neck Layer 18 (e.g., B, 512*w, H/16, W/16)
                 p5_out: Features from Neck Layer 21 (e.g., B, 512*w*r, H/32, W/32)
@@ -101,4 +103,4 @@ class Neck(nn.Module):
         cat_dp4_p5 = torch.cat([down_p4_out, feat3_p5], dim=1) # Concat with Backbone P5
         p5_out = self.csp_bu2(cat_dp4_p5) # Layer 21 output (to Head)
 
-        return p3_out, p4_out, p5_out
+        return p4_fused, p3_out, p4_out, p5_out
