@@ -59,7 +59,7 @@ class Backbone(nn.Module):
         # Layer 8: CSPLayer_2Conv. Output: 20x20x(512*w*r)
         # Layer 9: SPPF. Output: 20x20x(512*w*r)
         c_s4_conv_in = c_s3_conv_out
-        c_s4_conv_out = make_c(512, w, ratio=r) # r is the ratio_p5 from init
+        c_s4_conv_out = make_c(1024, w, ratio=r) # r is the ratio_p5 from init. Base changed from 512 to 1024 for P5.
         self.s4_conv = Conv(c_s4_conv_in, c_s4_conv_out, k=3, s=2, p=1)
         n_s4_csp = make_n_bottlenecks(3, n) # n=3xd in yolov8.md
         self.s4_csp = C2f(c_s4_conv_out, c_s4_conv_out, n=n_s4_csp, shortcut=True, e=0.5)

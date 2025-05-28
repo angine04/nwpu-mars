@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
+import math
 
 
 from .components import Conv, C2f
 
 
-def make_c(base_channels, widen_factor, ratio=1.0, divisor=8):
-    """Calculates number of channels, ensuring it's divisible by divisor."""
-    return int(max(round(base_channels * widen_factor * ratio), 1) * divisor / divisor) * divisor
+def make_c(base_channels, widen_factor, ratio=1.0):
+    """Calculates number of channels, ensuring it's divisible by 8."""
+    # Standardized implementation to match Backbone's local make_c
+    return math.ceil(base_channels * widen_factor * ratio / 8) * 8
 
 
 def make_n(base_n, deepen_factor):
@@ -37,7 +39,7 @@ class Neck(nn.Module):
         # Top-Down Path
         # Layer 12: CSPLayer_2Conv (P4_fused)
         # Input: Upsampled P5 (c_bb_p5) + Backbone P4 (c_bb_p4)
-        c1_td1 = make_c(512, widen_factor, ratio_p5) + make_c(512, widen_factor)
+        c1_td1 = make_c(1024, widen_factor, ratio_p5) + make_c(512, widen_factor) # P5 base is 1024, P4 base is 512
         c2_td1 = make_c(512, widen_factor)
         self.csp_td1 = C2f(c1_td1, c2_td1, n=n_csp, shortcut=True, e=0.5)
 
@@ -62,7 +64,7 @@ class Neck(nn.Module):
 
         # Layer 21: CSPLayer_2Conv (P5_fused_bottomup) -> Output for Head (largest stride)
         # Input: Downsampled P4_fused_bottomup (self.c_p4_out) + Backbone P5 (c_bb_p5)
-        c1_bu2 = self.c_p4_out + make_c(512, widen_factor, ratio_p5)
+        c1_bu2 = self.c_p4_out + make_c(1024, widen_factor, ratio_p5) # P5 base from backbone is 1024
         c2_bu2 = make_c(512, widen_factor, ratio_p5)
         self.csp_bu2 = C2f(c1_bu2, c2_bu2, n=n_csp, shortcut=True, e=0.5)
 
