@@ -42,7 +42,7 @@ def mcfg(tags):
         mcfg.checkpointModelFile = "/home/v5/Mars/v5/vanilla.nano.teacher/__cache__/best_weights.pth"
         mcfg.teacherModelFile = "/home/v5/Mars/v5/vanilla.nano.teacher/__cache__/best_weights.pth"
         mcfg.distilLossWeights = (1.0, 0.5, 0.2)
-        mcfg.maxEpoch = 500
+        mcfg.maxEpoch = 300
         mcfg.backboneFreezeEpochs = [x for x in range(0, 25)]
         mcfg.epochValidation = False # DO NOT MODIFY
         mcfg.trainSplitName = "small" # DO NOT MODIFY
