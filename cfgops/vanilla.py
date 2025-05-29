@@ -39,13 +39,19 @@ def mcfg(tags):
 
     if "distillation" in tags:
         mcfg.modelName = "distillation"
-        mcfg.checkpointModelFile = "/home/v5/Mars/zheyu/czy.nano.teacher/__cache__/best_weights.pth"
-        mcfg.teacherModelFile = "/home/v5/Mars/zheyu/czy.nano.teacher/__cache__/best_weights.pth"
-        mcfg.distilLossWeights = (1.0, 0.05, 0.001)
-        mcfg.maxEpoch = 100
+        mcfg.checkpointModelFile = "/home/v5/Mars/v5/vanilla.nano.teacher/__cache__/best_weights.pth"
+        mcfg.teacherModelFile = "/home/v5/Mars/v5/vanilla.nano.teacher/__cache__/best_weights.pth"
+        mcfg.distilLossWeights = (1.0, 0.5, 0.2)
+        mcfg.maxEpoch = 500
         mcfg.backboneFreezeEpochs = [x for x in range(0, 25)]
         mcfg.epochValidation = False # DO NOT MODIFY
         mcfg.trainSplitName = "small" # DO NOT MODIFY
         mcfg.teacherClassIndexes = [x for x in range(0, 10)] # DO NOT MODIFY
+        
+        # Added based on ResponseLoss requirements
+        mcfg.nc = len(mcfg.classList) # Student total classes
+        mcfg.teacher_nc = 10          # Teacher's original number of classes (for distillation target)
+        mcfg.regMax = 16              # Common value for YOLO/DFL, adjust if necessary
+        mcfg.teacher_head_total_classes = len(mcfg.classList) # Actual total classes in teacher's head output
 
     return mcfg
