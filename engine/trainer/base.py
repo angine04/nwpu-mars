@@ -13,6 +13,7 @@ class MarsBaseTrainer(object):
     def __init__(self, mcfg):
         self.mcfg = mcfg
         self.bestLoss = np.nan
+        self.bestLossEpoch = np.nan
         self.bestCacheFile = self.mcfg.epochBestWeightsPath()
         self.epochCacheFile = self.mcfg.epochCachePath()
         self.epochInfoFile = self.mcfg.epochInfoPath()
@@ -166,11 +167,12 @@ class MarsBaseTrainer(object):
             log.green("Caching best weights at epoch {}...".format(epoch + 1))
             model.save(self.bestCacheFile)
             self.bestLoss = validationLoss
+            self.bestLossEpoch = epoch + 1
         with open(self.epochInfoFile, "w") as f:
             f.write("last_saved_epoch={}\n".format(epoch + 1))
             f.write("train_loss={}\n".format(trainLoss))
             f.write("validation_loss={}\n".format(validationLoss))
-            f.write("best_loss_epoch={}\n".format(epoch + 1))
+            f.write("best_loss_epoch={}\n".format(self.bestLossEpoch))
             f.write("best_loss={}\n".format(self.bestLoss))
 
 
