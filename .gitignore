@@ -15,3 +15,9 @@ dask-worker-space
 .venv
 .DS_Store
 mar20
+zheyu
+v5
+memory-bank
+*.pt
+*.pth
+v5_bak
