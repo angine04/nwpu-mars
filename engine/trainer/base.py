@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from misc.log import log
 from tqdm import tqdm
 from dl.vocdataset import VocDataset
@@ -24,6 +25,8 @@ class MarsBaseTrainer(object):
         if self.mcfg.epochValidation:
             self.checkpointFiles.append(self.bestCacheFile)
         self.backboneFrozen = False
+        self.train_losses = []
+        self.val_losses = []
 
     def initTrainDataLoader(self):
         return VocDataset.getDataLoader(mcfg=self.mcfg, splitName=self.mcfg.trainSplitName, isTest=False, fullInfo=False, selectedClasses=self.mcfg.trainSelectedClasses)
@@ -101,6 +104,8 @@ class MarsBaseTrainer(object):
             progressBar.update(1)
 
         progressBar.close()
+        avg_train_loss = trainLoss / numBatches if numBatches > 0 else 0
+        self.train_losses.append(avg_train_loss)
         return trainLoss
 
     def epochValidation(self, model, loss, dataLoader, epoch):
@@ -125,6 +130,8 @@ class MarsBaseTrainer(object):
             progressBar.update(1)
 
         progressBar.close()
+        avg_val_loss = validationLoss / numBatches if numBatches > 0 else 0
+        self.val_losses.append(avg_val_loss)
         return validationLoss
 
     def run(self):
@@ -160,6 +167,8 @@ class MarsBaseTrainer(object):
             self.epochSave(epoch, model, trainLoss, validationLoss)
 
         log.inf("Mars trainer finished with max epoch at {}".format(self.mcfg.maxEpoch))
+        if self.train_losses:
+            self.plot_loss_curves()
 
     def epochSave(self, epoch, model, trainLoss, validationLoss):
         model.save(self.epochCacheFile)
@@ -174,6 +183,22 @@ class MarsBaseTrainer(object):
             f.write("validation_loss={}\n".format(validationLoss))
             f.write("best_loss_epoch={}\n".format(self.bestLossEpoch))
             f.write("best_loss={}\n".format(self.bestLoss))
+
+    def plot_loss_curves(self):
+        epochs = range(1, len(self.train_losses) + 1)
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, self.train_losses, 'b-o', label='Training Loss')
+        if self.val_losses:
+            plt.plot(epochs, self.val_losses, 'r-s', label='Validation Loss')
+        plt.title('Training and Validation Loss Curves')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plot_path = os.path.join(self.mcfg.plotDir(), "loss_curve.png")
+        plt.savefig(plot_path)
+        log.inf(f"Loss curve saved to {plot_path}")
+        plt.close()
 
 
 def getTrainer(mcfg):

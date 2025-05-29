@@ -170,3 +170,9 @@ class ModelConfig(object):
 
     def epochInfoPath(self):
         return os.path.join(self.cacheDir(), "info.txt")
+
+    def plotDir(self):
+        dirpath = os.path.join(self.root, self.user, self.cfgname, "plots")
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+        return dirpath
