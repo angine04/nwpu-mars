@@ -107,7 +107,34 @@ class DetectionLoss(object):
         gtLabels, gtBboxes = targets.split((1, 4), 2)  # cls=(batchSize, maxCount, 1), xyxy=(batchSize, maxCount, 4)
         gtMask = gtBboxes.sum(2, keepdim=True).gt_(0.0)
 
-        raise NotImplementedError("DetectionLoss::__call__")
+        # 使用model中的anchor points和stride tensor
+        anchorPoints = self.model.anchorPoints
+        strideTensor = self.model.anchorStrides
+        
+        # 解码预测框
+        predBboxes = bboxDecode(anchorPoints, predBoxDistribution, self.model.proj, xywh=False)  # xyxy, (b, h*w, 4)
+        
+        # 使用Task-Aligned Assigner分配目标
+        _, targetBboxes, targetScores, fgMask, _ = self.assigner(
+            predClassScores.detach().sigmoid(),
+            (predBboxes.detach() * strideTensor).type(gtBboxes.dtype),
+            anchorPoints * strideTensor,
+            gtLabels,
+            gtBboxes,
+            gtMask,
+        )
+        
+        targetScoresSum = max(targetScores.sum(), 1)
+        
+        # 分类损失
+        loss[1] = self.bce(predClassScores, targetScores.to(predClassScores.dtype)).sum() / targetScoresSum  # BCE
+        
+        # 边界框损失
+        if fgMask.sum():
+            targetBboxes /= strideTensor
+            loss[0], loss[2] = self.bboxLoss(
+                predBoxDistribution, predBboxes, anchorPoints, targetBboxes, targetScores, targetScoresSum, fgMask
+            )
 
         loss[0] *= self.mcfg.lossWeights[0]  # box
         loss[1] *= self.mcfg.lossWeights[1]  # cls
