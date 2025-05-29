@@ -22,7 +22,7 @@ class MarsBaseTrainer(object):
         ]
         if self.mcfg.epochValidation:
             self.checkpointFiles.append(self.bestCacheFile)
-        self.backboneFreezed = False
+        self.backboneFrozen = False
 
     def initTrainDataLoader(self):
         return VocDataset.getDataLoader(mcfg=self.mcfg, splitName=self.mcfg.trainSplitName, isTest=False, fullInfo=False, selectedClasses=self.mcfg.trainSelectedClasses)
@@ -72,10 +72,10 @@ class MarsBaseTrainer(object):
         if self.mcfg.backboneFreezeEpochs is not None:
             if epoch in self.mcfg.backboneFreezeEpochs:
                 model.freezeBackbone()
-                self.backboneFreezed = True
+                self.backboneFrozen = True
             else:
                 model.unfreezeBackbone()
-                self.backboneFreezed = False
+                self.backboneFrozen = False
 
     def fitOneEpoch(self, model, loss, dataLoader, optimizer, epoch):
         trainLoss = 0
@@ -96,7 +96,7 @@ class MarsBaseTrainer(object):
             optimizer.step()
 
             trainLoss += stepLoss.item()
-            progressBar.set_postfix(trainLossPerBatch=trainLoss / (batchIndex + 1), backboneFreezed=self.backboneFreezed)
+            progressBar.set_postfix(trainLossPerBatch=trainLoss / (batchIndex + 1), backboneFrozen=self.backboneFrozen)
             progressBar.update(1)
 
         progressBar.close()
