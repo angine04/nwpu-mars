@@ -197,7 +197,26 @@ class MarsBaseTrainer(object):
         self.val_losses.append(avg_val_loss)
         return validationLoss
 
+    def _version_log_file(self, log_file_path):
+        """Versions a log file by appending a number if it already exists."""
+        if not os.path.exists(log_file_path):
+            return
+
+        base, ext = os.path.splitext(log_file_path)
+        i = 1
+        # Find the next available version number
+        while os.path.exists(f"{base}.{i}{ext}"):
+            i += 1
+
+        new_log_file_path = f"{base}.{i}{ext}"
+        os.rename(log_file_path, new_log_file_path)
+        log.yellow(f"Renamed existing log file {log_file_path} to {new_log_file_path}")
+
     def run(self):
+        # Version existing log files before starting new run
+        self._version_log_file(self.logFile)
+        self._version_log_file(self.lossFile)
+
         # Set up log file for training
         log.setLogFile(self.logFile)
         log.cyan("Mars trainer running...")
