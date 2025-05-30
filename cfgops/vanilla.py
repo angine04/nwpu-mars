@@ -57,6 +57,61 @@ def mcfg(tags):
         mcfg.ema_decay = 0.9999  # recommended decay rate
         mcfg.ema_tau = 2000      # recommended tau parameter
 
+    # Early Stopping configuration - optional training enhancement technique
+    if "earlystop" in tags:
+        mcfg.use_early_stopping = True
+        mcfg.early_stopping_patience = 15  # Stop if no improvement for 15 epochs
+        mcfg.early_stopping_min_delta = 0.001  # Minimum change to qualify as improvement
+        mcfg.early_stopping_monitor = 'val_loss'  # Monitor validation loss
+        mcfg.early_stopping_mode = 'min'  # Stop when val_loss stops decreasing
+
+    # Classification Loss Weight Enhancement - boost classification learning
+    if "clsboost" in tags:
+        # 增强分类损失权重，从默认的0.5提升到2.0
+        mcfg.lossWeights = (7.5, 2.0, 1.5)  # box, cls(enhanced), dfl
+        
+    # Strong Classification Loss Weight Enhancement - aggressive boost
+    if "clsboost2x" in tags:
+        # 更强的分类损失权重增强，提升到4.0
+        mcfg.lossWeights = (7.5, 4.0, 1.5)  # box, cls(strong enhanced), dfl
+        
+    # Balanced Loss Weights - equal emphasis on all components
+    if "balanced" in tags:
+        # 平衡的损失权重配置
+        mcfg.lossWeights = (2.0, 2.0, 2.0)  # box, cls, dfl (all equal)
+
+    # Dynamic Classification Weight Adjustment - gradually increase cls weight
+    if "dynclsweight" in tags:
+        mcfg.use_dynamic_cls_weight = True
+        mcfg.cls_weight_schedule = 'linear'  # Linear increase
+        mcfg.cls_weight_start = 0.5  # Start with default weight
+        mcfg.cls_weight_end = 3.0    # End with enhanced weight
+        mcfg.cls_weight_warmup_epochs = 100  # Gradual increase over 100 epochs
+        
+    # Cosine Dynamic Classification Weight - smooth cosine increase
+    if "cosclsweight" in tags:
+        mcfg.use_dynamic_cls_weight = True
+        mcfg.cls_weight_schedule = 'cosine'  # Cosine increase
+        mcfg.cls_weight_start = 0.5
+        mcfg.cls_weight_end = 2.5
+        mcfg.cls_weight_warmup_epochs = 80
+
+    # Focal Loss Weight Adjustment - adaptive weight based on classification performance
+    if "focalweight" in tags:
+        mcfg.use_focal_cls_weight = True
+        mcfg.focal_alpha = 2.0  # Controls the rate of down-weighting easy examples
+        mcfg.focal_gamma = 2.0  # Focusing parameter
+        mcfg.min_cls_weight = 0.1  # Minimum weight when classification is very good
+        mcfg.max_cls_weight = 8.0  # Maximum weight when classification is poor
+        
+    # Strong Focal Loss Weight - more aggressive focal adjustment
+    if "focalweight2x" in tags:
+        mcfg.use_focal_cls_weight = True
+        mcfg.focal_alpha = 3.0  # Higher alpha for stronger effect
+        mcfg.focal_gamma = 3.0  # Higher gamma for more focus on hard examples
+        mcfg.min_cls_weight = 0.05
+        mcfg.max_cls_weight = 10.0
+
     # Enable additional data augmentation features via 'aug' tag
     if "aug" in tags:
         mcfg.augmentation['use_erase'] = True # Enable erase

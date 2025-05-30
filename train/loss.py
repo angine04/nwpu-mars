@@ -141,3 +141,61 @@ class DetectionLoss(object):
         loss[2] *= self.mcfg.lossWeights[2]  # dfl
 
         return loss.sum()
+    
+    def get_loss_components(self, preds, targets):
+        """
+        返回分离的损失组件，用于Focal Loss权重调度器
+        Returns: (total_loss, box_loss, cls_loss, dfl_loss)
+        """
+        loss = torch.zeros(3, device=self.mcfg.device)  # box, cls, dfl
+
+        batchSize = preds[0].shape[0]
+        no = self.mcfg.nc + self.mcfg.regMax * 4
+
+        # predictioin preprocess
+        predBoxDistribution, predClassScores = torch.cat([xi.view(batchSize, no, -1) for xi in preds], 2).split((self.mcfg.regMax * 4, self.mcfg.nc), 1)
+        predBoxDistribution = predBoxDistribution.permute(0, 2, 1).contiguous() # (batchSize, 80 * 80 + 40 * 40 + 20 * 20, regMax * 4)
+        predClassScores = predClassScores.permute(0, 2, 1).contiguous() # (batchSize, 80 * 80 + 40 * 40 + 20 * 20, nc)
+
+        # ground truth preprocess
+        targets = self.preprocess(targets.to(self.mcfg.device), batchSize, scaleTensor=self.model.scaleTensor) # (batchSize, maxCount, 5)
+        gtLabels, gtBboxes = targets.split((1, 4), 2)  # cls=(batchSize, maxCount, 1), xyxy=(batchSize, maxCount, 4)
+        gtMask = gtBboxes.sum(2, keepdim=True).gt_(0.0)
+
+        # 使用model中的anchor points和stride tensor
+        anchorPoints = self.model.anchorPoints
+        strideTensor = self.model.anchorStrides
+        
+        # 解码预测框
+        predBboxes = bboxDecode(anchorPoints, predBoxDistribution, self.model.proj, xywh=False)  # xyxy, (b, h*w, 4)
+        
+        # 使用Task-Aligned Assigner分配目标
+        _, targetBboxes, targetScores, fgMask, _ = self.assigner(
+            predClassScores.detach().sigmoid(),
+            (predBboxes.detach() * strideTensor).type(gtBboxes.dtype),
+            anchorPoints * strideTensor,
+            gtLabels,
+            gtBboxes,
+            gtMask,
+        )
+        
+        targetScoresSum = max(targetScores.sum(), 1)
+        
+        # 分类损失（未加权）
+        cls_loss_raw = self.bce(predClassScores, targetScores.to(predClassScores.dtype)).sum() / targetScoresSum
+        loss[1] = cls_loss_raw
+        
+        # 边界框损失（未加权）
+        if fgMask.sum():
+            targetBboxes /= strideTensor
+            loss[0], loss[2] = self.bboxLoss(
+                predBoxDistribution, predBboxes, anchorPoints, targetBboxes, targetScores, targetScoresSum, fgMask
+            )
+
+        # 应用权重
+        weighted_loss = loss.clone()
+        weighted_loss[0] *= self.mcfg.lossWeights[0]  # box
+        weighted_loss[1] *= self.mcfg.lossWeights[1]  # cls
+        weighted_loss[2] *= self.mcfg.lossWeights[2]  # dfl
+
+        return weighted_loss.sum(), loss[0].item(), loss[1].item(), loss[2].item()

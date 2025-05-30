@@ -39,7 +39,22 @@ class ModelConfig(object):
 
         # train setup
         self.talTopk = 10
-        self.lossWeights = (7.5, 0.5, 1.5) # box, cls, dfl
+        self.lossWeights = (7.5, 5, 1.5) # box, cls, dfl
+        
+        # Dynamic classification loss weight adjustment
+        self.use_dynamic_cls_weight = False
+        self.cls_weight_schedule = 'linear'  # 'linear', 'cosine', 'step'
+        self.cls_weight_start = 0.5  # Starting classification weight
+        self.cls_weight_end = 2.0    # Ending classification weight
+        self.cls_weight_warmup_epochs = 50  # Epochs to reach target weight
+        
+        # Focal Loss weight adjustment
+        self.use_focal_cls_weight = False
+        self.focal_alpha = 2.0  # Focal loss alpha parameter
+        self.focal_gamma = 2.0  # Focal loss gamma parameter  
+        self.min_cls_weight = 0.1  # Minimum classification weight
+        self.max_cls_weight = 5.0  # Maximum classification weight
+        
         self.startEpoch = 0
         self.maxEpoch = 200
         self.backboneFreezeEpochs = []
@@ -60,6 +75,13 @@ class ModelConfig(object):
         self.testSelectedClasses = None
         self.minIou = 0.5
         self.paintImages = False
+
+        # early stopping setup
+        self.use_early_stopping = False
+        self.early_stopping_patience = 10
+        self.early_stopping_min_delta = 0.001
+        self.early_stopping_monitor = 'val_loss'  # 'val_loss' or 'train_loss'
+        self.early_stopping_mode = 'min'  # 'min' for loss, 'max' for accuracy/mAP
 
         # dataset splits
         self.trainSplitName = "train"

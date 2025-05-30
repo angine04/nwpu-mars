@@ -9,6 +9,8 @@ from factory.modelfactory import MarsModelFactory
 from train.opt import MarsOptimizerFactory
 from train.sched import MarsLearningRateSchedulerFactory
 from .ema import ModelEMA 
+from .early_stopping import EarlyStopping
+from train.loss_weight_scheduler import LossWeightScheduler, FocalLossWeightScheduler
 
 
 class MarsBaseTrainer(object):
@@ -37,6 +39,25 @@ class MarsBaseTrainer(object):
         self.train_losses = []
         self.val_losses = []
         self.ema = None  # EMA reference
+        self.early_stopping = None  # Early stopping reference
+        
+        # Initialize loss weight scheduler (choose between regular and focal)
+        if getattr(self.mcfg, 'use_focal_cls_weight', False):
+            self.loss_weight_scheduler = FocalLossWeightScheduler(self.mcfg)
+        else:
+            self.loss_weight_scheduler = LossWeightScheduler(self.mcfg)
+        
+        # Initialize early stopping if enabled
+        if getattr(self.mcfg, 'use_early_stopping', False):
+            self.early_stopping = EarlyStopping(
+                patience=getattr(self.mcfg, 'early_stopping_patience', 10),
+                min_delta=getattr(self.mcfg, 'early_stopping_min_delta', 0.001),
+                monitor=getattr(self.mcfg, 'early_stopping_monitor', 'val_loss'),
+                mode=getattr(self.mcfg, 'early_stopping_mode', 'min'),
+                restore_best_weights=True
+            )
+            log.green(f"Early stopping initialized: patience={self.early_stopping.patience}, "
+                     f"monitor={self.early_stopping.monitor}, mode={self.early_stopping.mode}")
 
     def initTrainDataLoader(self):
         return VocDataset.getDataLoader(mcfg=self.mcfg, splitName=self.mcfg.trainSplitName, isTest=False, fullInfo=False, selectedClasses=self.mcfg.trainSelectedClasses)
@@ -80,9 +101,29 @@ class MarsBaseTrainer(object):
                                 self.bestLossEpoch = int(value)
                             except ValueError:
                                 self.bestLossEpoch = np.nan # Handle NaN string
+                        # Restore early stopping state
+                        elif key == 'early_stopping_wait' and self.early_stopping is not None:
+                            try:
+                                self.early_stopping.wait = int(value)
+                            except ValueError:
+                                pass
+                        elif key == 'early_stopping_best_epoch' and self.early_stopping is not None:
+                            try:
+                                self.early_stopping.best_epoch = int(value) - 1  # Convert back to 0-indexed
+                            except ValueError:
+                                pass
+                        elif key == 'early_stopping_best_value' and self.early_stopping is not None:
+                            try:
+                                self.early_stopping.best = float(value)
+                            except ValueError:
+                                pass
 
                 if epoch_found_in_file and startEpoch < self.mcfg.maxEpoch:
                     log.yellow("Checkpoint loaded: resuming from epoch {}".format(startEpoch))
+                    if self.early_stopping is not None:
+                        log.yellow(f"Early stopping state restored: wait={self.early_stopping.wait}, "
+                                  f"best_epoch={self.early_stopping.best_epoch + 1}, "
+                                  f"best_value={self.early_stopping.best:.6f}")
                     loaded_from_checkpoint = True
                 else:
                      log.yellow("Checkpoint found but epoch info incomplete or max epoch reached, starting from epoch 0.")
@@ -145,6 +186,11 @@ class MarsBaseTrainer(object):
         numBatches = int(len(dataLoader.dataset) / dataLoader.batch_size)
         progressBar = tqdm(total=numBatches, desc="Epoch {}/{}".format(epoch + 1, self.mcfg.maxEpoch), postfix=dict, mininterval=0.5, ascii=False, ncols=130)
 
+        # 用于Focal Loss调度器的损失累积
+        epoch_cls_loss = 0
+        epoch_total_loss = 0
+        focal_update_interval = max(1, numBatches // 10)  # 每10%的batch更新一次权重
+
         for batchIndex, batch in enumerate(dataLoader):
             images, labels = batch
             images = images.to(self.mcfg.device)
@@ -152,7 +198,21 @@ class MarsBaseTrainer(object):
             optimizer.zero_grad()
 
             output = model(images)
-            stepLoss = loss(output, labels)
+            
+            # 如果使用Focal Loss调度器，获取损失组件
+            if hasattr(self.loss_weight_scheduler, 'use_focal_weight') and self.loss_weight_scheduler.use_focal_weight:
+                stepLoss, box_loss, cls_loss, dfl_loss = loss.get_loss_components(output, labels)
+                epoch_cls_loss += cls_loss
+                epoch_total_loss += (box_loss + cls_loss + dfl_loss)
+                
+                # 定期更新Focal权重
+                if (batchIndex + 1) % focal_update_interval == 0:
+                    avg_cls_loss = epoch_cls_loss / (batchIndex + 1)
+                    avg_total_loss = epoch_total_loss / (batchIndex + 1)
+                    self.loss_weight_scheduler.update_loss_weights(epoch, avg_cls_loss, avg_total_loss)
+            else:
+                stepLoss = loss(output, labels)
+            
             stepLoss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             optimizer.step()
@@ -233,6 +293,10 @@ class MarsBaseTrainer(object):
         validationLoader = self.initValidationDataLoader()
 
         for epoch in range(startEpoch, self.mcfg.maxEpoch):
+            # Update loss weights for current epoch
+            self.loss_weight_scheduler.update_loss_weights(epoch)
+            self.loss_weight_scheduler.log_current_weights(epoch)
+            
             self.preEpochSetup(model, epoch)
             scheduler.updateLearningRate(epoch)
             trainLoss = self.fitOneEpoch(
@@ -249,6 +313,22 @@ class MarsBaseTrainer(object):
                 epoch=epoch,
             )
             self.epochSave(epoch, model, trainLoss, validationLoss)
+            
+            # Early stopping check
+            if self.early_stopping is not None:
+                # Determine which metric to monitor
+                if self.early_stopping.monitor == 'val_loss':
+                    monitor_value = validationLoss
+                elif self.early_stopping.monitor == 'train_loss':
+                    monitor_value = trainLoss
+                else:
+                    log.red(f"Unknown monitor metric: {self.early_stopping.monitor}")
+                    monitor_value = validationLoss
+                
+                # Check if training should stop
+                if self.early_stopping(monitor_value, epoch):
+                    log.inf(f"Early stopping triggered at epoch {epoch + 1}")
+                    break
 
         log.inf("Mars trainer finished with max epoch at {}".format(self.mcfg.maxEpoch))
         if self.train_losses:
@@ -262,13 +342,25 @@ class MarsBaseTrainer(object):
             f.write("validation_loss={}\n".format(validationLoss if not np.isnan(validationLoss) else 'NaN'))
             f.write("best_loss_epoch={}\n".format(self.bestLossEpoch if not np.isnan(self.bestLossEpoch) else 'NaN'))
             f.write("best_loss={}\n".format(self.bestLoss if not np.isnan(self.bestLoss) else 'NaN'))
+            
+            # Save early stopping information
+            if self.early_stopping is not None:
+                f.write("early_stopping_wait={}\n".format(self.early_stopping.wait))
+                f.write("early_stopping_best_epoch={}\n".format(self.early_stopping.best_epoch + 1))
+                f.write("early_stopping_best_value={}\n".format(self.early_stopping.best))
+                f.write("early_stopping_monitor={}\n".format(self.early_stopping.monitor))
 
         # Log losses to losses.log file
         with open(self.lossFile, "a") as f:
-            f.write("epoch={}, train_loss={:.6f}, val_loss={:.6f}\n".format(
+            early_stop_info = ""
+            if self.early_stopping is not None:
+                early_stop_info = f", early_stop_wait={self.early_stopping.wait}/{self.early_stopping.patience}"
+            
+            f.write("epoch={}, train_loss={:.6f}, val_loss={:.6f}{}\n".format(
                 epoch + 1, 
                 trainLoss, 
-                validationLoss if not np.isnan(validationLoss) else float('nan')
+                validationLoss if not np.isnan(validationLoss) else float('nan'),
+                early_stop_info
             ))
 
         # Determine model to save (EMA preferred)
