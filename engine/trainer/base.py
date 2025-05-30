@@ -8,6 +8,7 @@ from dl.vocdataset import VocDataset
 from factory.modelfactory import MarsModelFactory
 from train.opt import MarsOptimizerFactory
 from train.sched import MarsLearningRateSchedulerFactory
+from .ema import ModelEMA 
 
 
 class MarsBaseTrainer(object):
@@ -27,6 +28,9 @@ class MarsBaseTrainer(object):
         self.backboneFrozen = False
         self.train_losses = []
         self.val_losses = []
+        self.ema = None  # 新增EMA引用
+        # if getattr(mcfg, 'use_ema', False):  # 从配置中读取是否启用EMA
+        #    self.ema = ModelEMA(model)  # 注意：需在initModel后调用！
 
     def initTrainDataLoader(self):
         return VocDataset.getDataLoader(mcfg=self.mcfg, splitName=self.mcfg.trainSplitName, isTest=False, fullInfo=False, selectedClasses=self.mcfg.trainSelectedClasses)
@@ -54,6 +58,8 @@ class MarsBaseTrainer(object):
                 raise ValueError("Failed to load last epoch info from file: {}".format(self.epochInfoFile))
             if startEpoch < self.mcfg.maxEpoch:
                 log.yellow("Checkpoint loaded: resuming from epoch {}".format(startEpoch))
+            if getattr(self.mcfg, 'use_ema', False):
+                self.ema = ModelEMA(model)  # 初始化EMA
             return model, startEpoch
 
         if self.mcfg.checkpointModelFile is not None: # use model from previous run, but start epoch from zero
@@ -99,6 +105,9 @@ class MarsBaseTrainer(object):
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             optimizer.step()
 
+            if self.ema is not None:
+                self.ema.update(model)  # 每个batch后更新EMA
+
             trainLoss += stepLoss.item()
             progressBar.set_postfix(trainLossPerBatch=trainLoss / (batchIndex + 1), backboneFrozen=self.backboneFrozen)
             progressBar.update(1)
@@ -109,6 +118,8 @@ class MarsBaseTrainer(object):
         return trainLoss
 
     def epochValidation(self, model, loss, dataLoader, epoch):
+        eval_model = self.ema.ema if (self.ema is not None) else model  # 优先使用EMA模型
+        eval_model.setInferenceMode(True)
         if not self.mcfg.epochValidation:
             return np.nan
 
@@ -171,6 +182,8 @@ class MarsBaseTrainer(object):
             self.plot_loss_curves()
 
     def epochSave(self, epoch, model, trainLoss, validationLoss):
+        save_model = self.ema.ema if (self.ema is not None) else model  # 优先保存EMA模型
+        save_model.save(self.epochCacheFile)
         model.save(self.epochCacheFile)
         if self.mcfg.epochValidation and (np.isnan(self.bestLoss) or validationLoss < self.bestLoss):
             log.green("Caching best weights at epoch {}...".format(epoch + 1))
