@@ -1,5 +1,6 @@
 import os
 import torch
+import platform
 
 
 class ModelConfig(object):
@@ -94,7 +95,12 @@ class ModelConfig(object):
     def finalize(self, tags):
         self.enrichTags(tags)
 
-        self.user = os.getenv("USERNAME")
+        # 🔧 根据操作系统获取用户名环境变量
+        if platform.system() == "Windows":
+            self.user = os.getenv("USERNAME")
+        else:
+            self.user = os.getenv("USER")
+
         if self.user is None or len(self.user) == 0:
             raise ValueError("User not found")
         if self.root is None:
