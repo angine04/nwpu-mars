@@ -278,6 +278,7 @@ class MarsBaseTrainer(object):
         plt.ylabel('Loss')
         plt.legend()
         plt.grid(True)
+        plt.yscale('log')
         plot_path = os.path.join(self.mcfg.plotDir(), "loss_curve.png")
         plt.savefig(plot_path)
         log.inf(f"Loss curve saved to {plot_path}")
