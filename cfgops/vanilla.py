@@ -26,6 +26,10 @@ def mcfg(tags):
 
     mcfg.paintImages = True
 
+    # YOLOv8官方预训练权重配置 - 使用现有的pretrainedBackboneUrl机制
+    if "pretrained" in tags:
+        mcfg.pretrainedBackboneUrl = "file://yolov8n_converted_backbone.pth"
+
     if "full" in tags:
         mcfg.modelName = "base"
         mcfg.maxEpoch = 200

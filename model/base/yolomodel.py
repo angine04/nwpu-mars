@@ -111,20 +111,63 @@ class YoloModel(nn.Module):
             log.inf("Yolo model state saved at {}".format(modelFile))
 
     def loadBackboneWeights(self, url):
-        pretrainedState = torch.hub.load_state_dict_from_url(
-            url=url,
-            map_location="cpu",
-            model_dir=self.mcfg.downloadDir(),
-            progress=False,
-        )
-        missingKeys, unexpectedKeys = self.backbone.load_state_dict(pretrainedState, strict=False)
-        if len(unexpectedKeys) > 0:
-            log.yellow("Unexpected keys found in model url, ignored:\nunexpected={}\nurl={}".format(unexpectedKeys, url))
-        if len(missingKeys) > 0:
-            log.red("Missing keys in model url:\nmissing={}\nurl={}".format(missingKeys, url))
-            import pdb; pdb.set_trace()
+        if url.startswith("file://"):
+            # 处理本地文件，支持我们转换的YOLOv8预训练权重
+            local_path = url[7:]  # 移除 "file://" 前缀
+            if not os.path.exists(local_path):
+                log.red("Local pretrained file not found: {}".format(local_path))
+                return
+            
+            try:
+                # 尝试加载我们转换的格式
+                checkpoint = torch.load(local_path, map_location="cpu", weights_only=True)
+                
+                if 'state_dict' in checkpoint:
+                    # 我们转换的格式
+                    pretrained_state_dict = checkpoint['state_dict']
+                    conversion_info = checkpoint.get('conversion_info', {})
+                    
+                    log.inf("Loading weights from: {}".format(local_path))
+                    if conversion_info:
+                        log.inf("  Source: {}".format(conversion_info.get('original_file', 'unknown')))
+                        log.inf("  Converted params: {}".format(conversion_info.get('converted_params', 'unknown')))
+                else:
+                    # 标准格式
+                    pretrained_state_dict = checkpoint
+                    log.inf("Loading local backbone weights from: {}".format(local_path))
+                
+                # 加载权重到backbone
+                missing_keys, unexpected_keys = self.backbone.load_state_dict(pretrained_state_dict, strict=False)
+                
+                if len(unexpected_keys) > 0:
+                    log.yellow("Unexpected keys in local pretrained weights (ignored): {}".format(unexpected_keys[:3]))
+                
+                if len(missing_keys) > 0:
+                    log.yellow("Missing keys in local pretrained weights: {}".format(missing_keys[:3]))
+                    if len(missing_keys) > 3:
+                        log.yellow("  ... and {} more missing keys".format(len(missing_keys) - 3))
+                else:
+                    log.green("✓ Local pretrained backbone weights loaded successfully!")
+                
+            except Exception as e:
+                log.red("Failed to load local pretrained weights: {}".format(str(e)))
+                
         else:
-            log.grey("Pretrained backbone weights loaded from url: {}".format(url))
+            # 原有的URL下载逻辑
+            pretrainedState = torch.hub.load_state_dict_from_url(
+                url=url,
+                map_location="cpu",
+                model_dir=self.mcfg.downloadDir(),
+                progress=False,
+            )
+            missingKeys, unexpectedKeys = self.backbone.load_state_dict(pretrainedState, strict=False)
+            if len(unexpectedKeys) > 0:
+                log.yellow("Unexpected keys found in model url, ignored:\nunexpected={}\nurl={}".format(unexpectedKeys, url))
+            if len(missingKeys) > 0:
+                log.red("Missing keys in model url:\nmissing={}\nurl={}".format(missingKeys, url))
+                import pdb; pdb.set_trace()
+            else:
+                log.grey("Pretrained backbone weights loaded from url: {}".format(url))
 
     def load(self, modelFile):
         modelState = torch.load(modelFile, weights_only=True)
