@@ -3,7 +3,7 @@ import torch
 from copy import deepcopy
 
 class ModelEMA:
-    """EMA（指数移动平均）模型权重管理"""
+    """EMA (Exponential Moving Average) model weight management"""
     def __init__(self, model, decay=0.9999, tau=2000):
         # Parameter validation
         if not (0 <= decay <= 1):
@@ -41,14 +41,14 @@ class ModelEMA:
                 ema_param.data.mul_(decay).add_(model_param.data, alpha=1 - decay)
     
     def copy_attr(self, model):
-        """从原模型复制非参数属性（如果需要）"""
-        # 复制一些重要的模型属性
+        """Copy non-parameter attributes from original model (if needed)"""
+        # Copy some important model attributes
         for attr in ['stride', 'nc', 'names', 'anchors']:
             if hasattr(model, attr):
                 setattr(self.ema, attr, getattr(model, attr))
     
     def clone_model_attr(self, model):
-        """克隆模型的非参数属性"""
+        """Clone non-parameter attributes from model"""
         for k, v in model.__dict__.items():
             if not k.startswith('_') and k not in ['training']:
                 try:

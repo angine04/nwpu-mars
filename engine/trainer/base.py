@@ -48,10 +48,6 @@ class MarsBaseTrainer(object):
         return VocDataset.getDataLoader(mcfg=self.mcfg, splitName=self.mcfg.testSplitName, isTest=False, fullInfo=False, selectedClasses=None)
 
     def initModel(self):
-        import platform
-        import torch
-        # from util import log # 已在文件顶部导入
-
         startEpoch = 0 # Default start epoch
         model = None # Initialize model to None
         loaded_from_checkpoint = False
@@ -60,7 +56,7 @@ class MarsBaseTrainer(object):
         if not self.mcfg.nobuf and all(os.path.exists(x) for x in self.checkpointFiles):
             log.yellow("Attempting to resume training from checkpoint...")
             try:
-                # loadPretrainedModel只返回模型，不返回epoch
+                # loadPretrainedModel returns model only, not epoch
                 model = MarsModelFactory.loadPretrainedModel(self.mcfg, self.epochCacheFile)
 
                 with open(self.epochInfoFile, 'r') as file:
@@ -238,7 +234,7 @@ class MarsBaseTrainer(object):
             self.plot_loss_curves()
 
     def epochSave(self, epoch, model, trainLoss, validationLoss):
-        # 保存详细训练信息到 epochInfoFile
+        # Save detailed training information to epochInfoFile
         with open(self.epochInfoFile, "w") as f:
             f.write("last_saved_epoch={}\n".format(epoch + 1))
             f.write("train_loss={}\n".format(trainLoss))
@@ -246,17 +242,17 @@ class MarsBaseTrainer(object):
             f.write("best_loss_epoch={}\n".format(self.bestLossEpoch if not np.isnan(self.bestLossEpoch) else 'NaN'))
             f.write("best_loss={}\n".format(self.bestLoss if not np.isnan(self.bestLoss) else 'NaN'))
 
-        # 确定要保存的模型（EMA优先）
+        # Determine model to save (EMA preferred)
         save_model = self.ema.ema if (self.ema is not None) else model
 
-        # 检查是否为最佳验证损失
+        # Check if this is the best validation loss
         is_best = self.mcfg.epochValidation and (np.isnan(self.bestLoss) or validationLoss < self.bestLoss)
         
         if is_best:
             log.green("Caching best weights at epoch {}...".format(epoch + 1))
             self.bestLoss = validationLoss
             self.bestLossEpoch = epoch + 1
-            save_model.save(self.bestCacheFile)  # 保存最佳模型
+            save_model.save(self.bestCacheFile)  # Save best model
         
         # Always save current epoch weights to epochCacheFile (for resuming training)
         save_model.save(self.epochCacheFile)
