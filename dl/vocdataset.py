@@ -191,7 +191,7 @@ class VocDataset(Dataset):
         boxList = xml.XmlBbox.loadXmlObjectList(annFile, self.classList, selectedClasses=self.selectedClasses, asArray=True)
 
         if self.isTest:
-            imageData, boxList, tinfo = self.augp.processSimple(image, boxList)
+            imageData_np, boxList_np, tinfo = self.augp.processSimple(image, boxList)
         else:
             # Apply Mixup first if enabled and lucky
             if self.augp.use_mixup and random.random() < self.augp.mixupProb:
@@ -302,10 +302,11 @@ class VocDataset(Dataset):
                 if self.augp.use_erase:
                     imageData_np = self.augp.randomErasing(imageData_np)
 
-            # postprocess expects numpy arrays
-            imageData, labels = self.postprocess(imageData_np, boxList_np)
+        # postprocess expects numpy arrays - Move this outside the if/else block
+        imageData, labels = self.postprocess(imageData_np, boxList_np) # Use the results from either branch
         
         if not self.fullInfo:
+            # In this case, tinfo and image are not needed, return only processed data and labels
             return imageData, labels
 
         tinfo.imgFile = imgFile # Note: Tinfo might be None if mixup was applied
