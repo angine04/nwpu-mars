@@ -26,14 +26,25 @@ def mcfg(tags):
 
     mcfg.paintImages = True
 
-        # Data Augmentation configuration - control aug.py parameters
+    # Data Augmentation configuration - control aug.py parameters
+    # Base augmentations (originally default enabled) are configured here.
+    # Additional augmentations like erase and crop are enabled by the 'aug' tag.
     mcfg.augmentation = {
         'jitter': 0.3,
-        'rescalef': (0.25, 2),
-        'flipProb': 0.5,
+        'rescalef': (0.25, 2), # Rescale factor range
+        'flipProb': 0.5, # Probability of horizontal flip
         'huef': 0.1,
         'satf': 0.7,
         'valf': 0.4,
+        'use_flip': True, # Toggle: Random horizontal flip (Default Enabled)
+        'use_hsv': True,  # Toggle: HSV color adjustment (Default Enabled)
+
+        # Additional augmentations (Default Disabled, enabled by 'aug' tag)
+        'eraseProb': 0.0, # Probability of applying random erasing
+        'eraseArea': (0.02, 0.4), # Area ratio of erased region (min, max)
+        'use_erase': False, # Toggle: Random erasing
+        'use_crop': False, # Toggle: Random cropping
+        'cropArea': (0.5, 1.0), # Crop area ratio range
     }
 
     # YOLOv8官方预训练权重配置 - 使用现有的pretrainedBackboneUrl机制
@@ -46,10 +57,25 @@ def mcfg(tags):
         mcfg.ema_decay = 0.9999  # recommended decay rate
         mcfg.ema_tau = 2000      # recommended tau parameter
 
+    # Enable additional data augmentation features via 'aug' tag
+    if "aug" in tags:
+        mcfg.augmentation['use_erase'] = True # Enable erase
+        mcfg.augmentation['eraseProb'] = 0.5 # Set erase probability (can override default 0.0 if needed, though 0.0 is the 'off' state)
+        mcfg.augmentation['use_crop'] = True # Enable crop
+        mcfg.augmentation['cropArea'] = (0.5, 1.0) # Set crop area
+        mcfg.augmentation['use_mixup'] = True # Enable Mixup
+        mcfg.augmentation['mixupProb'] = 1.0 # Set Mixup probability
+        mcfg.augmentation['mixupAlpha'] = 1.5 # Set Mixup alpha
+
     if "full" in tags:
         mcfg.modelName = "base"
         mcfg.maxEpoch = 200
         mcfg.backboneFreezeEpochs = [x for x in range(0, 100)]
+
+    if "fast" in tags:
+        mcfg.modelName = "base"
+        mcfg.maxEpoch = 50
+        mcfg.backboneFreezeEpochs = [x for x in range(0, 25)]
 
     if "teacher" in tags:
         mcfg.modelName = "base"
