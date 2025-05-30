@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     MarsEngine(
         mode=mode,
-        cfgname="vanilla.nano.full.pretrained",
+        cfgname="vanilla.nano.full.ema",
         root="/home/v5/Mars", # 注意项目运行root不要放在代码路径下
         nobuf=nobuf,
     ).run()

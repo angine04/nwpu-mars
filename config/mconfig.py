@@ -95,7 +95,7 @@ class ModelConfig(object):
     def finalize(self, tags):
         self.enrichTags(tags)
 
-        # 🔧 根据操作系统获取用户名环境变量
+        # Get username based on operating system
         if platform.system() == "Windows":
             self.user = os.getenv("USERNAME")
         else:

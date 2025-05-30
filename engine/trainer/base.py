@@ -14,21 +14,29 @@ from .ema import ModelEMA
 class MarsBaseTrainer(object):
     def __init__(self, mcfg):
         self.mcfg = mcfg
-        self.cacheDir = os.path.join(self.mcfg.getCacheDir())
-        self.epochInfoFile = os.path.join(self.cacheDir, "last_epoch.info")
-        self.epochCacheFile = os.path.join(self.cacheDir, "last_weights.pth")
-        self.bestCacheFile = os.path.join(self.cacheDir, "best_weights.pth")
-        self.logFile = os.path.join(self.cacheDir, "train.log")
-        self.lossFile = os.path.join(self.cacheDir, "losses.log")
+        self.epochInfoFile = self.mcfg.epochInfoPath()
+        self.epochCacheFile = self.mcfg.epochCachePath()
+        self.bestCacheFile = self.mcfg.epochBestWeightsPath()
+        self.logFile = os.path.join(self.mcfg.cacheDir(), "train.log")
+        self.lossFile = os.path.join(self.mcfg.cacheDir(), "losses.log")
         
         # loss tracking
         self.bestLoss = np.nan
+        self.bestLossEpoch = np.nan
+        
+        # checkpoint files for resuming training
+        self.checkpointFiles = [
+            self.epochCacheFile,
+            self.epochInfoFile,
+        ]
+        if self.mcfg.epochValidation:
+            self.checkpointFiles.append(self.bestCacheFile)
         
         # backbone frozen logic
         self.backboneFrozen = False
         self.train_losses = []
         self.val_losses = []
-        self.ema = None  # 新增EMA引用
+        self.ema = None  # EMA reference
 
     def initTrainDataLoader(self):
         return VocDataset.getDataLoader(mcfg=self.mcfg, splitName=self.mcfg.trainSplitName, isTest=False, fullInfo=False, selectedClasses=self.mcfg.trainSelectedClasses)
@@ -42,43 +50,80 @@ class MarsBaseTrainer(object):
     def initModel(self):
         import platform
         import torch
-        from util import log
+        # from util import log # 已在文件顶部导入
 
-        # Check if last epoch info file exists
-        if os.path.exists(self.epochInfoFile):
-            model, startEpoch = MarsModelFactory.loadCheckpointModel(self.mcfg, self.epochCacheFile)
+        startEpoch = 0 # Default start epoch
+        model = None # Initialize model to None
+        loaded_from_checkpoint = False
+
+        # Check if all necessary checkpoint files exist
+        if not self.mcfg.nobuf and all(os.path.exists(x) for x in self.checkpointFiles):
+            log.yellow("Attempting to resume training from checkpoint...")
             try:
+                # loadPretrainedModel只返回模型，不返回epoch
+                model = MarsModelFactory.loadPretrainedModel(self.mcfg, self.epochCacheFile)
+
                 with open(self.epochInfoFile, 'r') as file:
                     content = file.read().strip()
-                startEpoch = int(content)
-            except Exception as e:
-                log.red("Failed to load last epoch info from file: {}".format(self.epochInfoFile))
-                raise ValueError("Failed to load last epoch info from file: {}".format(self.epochInfoFile))
-            if startEpoch < self.mcfg.maxEpoch:
-                log.yellow("Checkpoint loaded: resuming from epoch {}".format(startEpoch))
-            
-            # 🔧 修复：EMA初始化移到模型完全加载后
-            if getattr(self.mcfg, 'use_ema', False):
-                ema_decay = getattr(self.mcfg, 'ema_decay', 0.9999)
-                ema_tau = getattr(self.mcfg, 'ema_tau', 2000)
-                self.ema = ModelEMA(model, decay=ema_decay, tau=ema_tau)
-                log.green(f"EMA initialized with decay={ema_decay}, tau={ema_tau}")
-            
-            return model, startEpoch
+                # Read detailed training information
+                epoch_found_in_file = False
+                for line in content.splitlines():
+                    tokens = line.split('=')
+                    if len(tokens) == 2:
+                        key, value = tokens
+                        if key == 'last_saved_epoch':
+                            startEpoch = int(value)
+                            epoch_found_in_file = True
+                        elif key == 'best_loss':
+                            try:
+                                self.bestLoss = float(value)
+                            except ValueError:
+                                self.bestLoss = np.nan # Handle NaN string
+                        elif key == 'best_loss_epoch':
+                            try:
+                                self.bestLossEpoch = int(value)
+                            except ValueError:
+                                self.bestLossEpoch = np.nan # Handle NaN string
 
-        if self.mcfg.checkpointModelFile is not None: # use model from previous run, but start epoch from zero
-            model, _ = MarsModelFactory.loadCheckpointModel(self.mcfg, self.mcfg.checkpointModelFile)
-        else:
-            model = MarsModelFactory.loadNewModel(self.mcfg)
-        
-        # 🔧 修复：EMA初始化移到模型完全准备好之后
+                if epoch_found_in_file and startEpoch < self.mcfg.maxEpoch:
+                    log.yellow("Checkpoint loaded: resuming from epoch {}".format(startEpoch))
+                    loaded_from_checkpoint = True
+                else:
+                     log.yellow("Checkpoint found but epoch info incomplete or max epoch reached, starting from epoch 0.")
+
+
+            except Exception as e:
+                log.red("Failed to load checkpoint from {}: {}".format(self.epochCacheFile, e))
+                # If checkpoint loading fails, fall through to load new model or external checkpoint
+                model = None # Ensure model is None to trigger loading below
+                startEpoch = 0
+                loaded_from_checkpoint = False
+
+        # If not loaded from checkpoint, check for external checkpoint or load new model
+        if not loaded_from_checkpoint:
+            if self.mcfg.checkpointModelFile is not None:
+                 # Load model from specified external checkpoint file (start epoch 0)
+                 log.yellow("Loading model from external checkpoint: {}".format(self.mcfg.checkpointModelFile))
+                 model = MarsModelFactory.loadPretrainedModel(self.mcfg, self.mcfg.checkpointModelFile)
+                 startEpoch = 0
+            else:
+                # Load a brand new model (potentially with pretrained backbone)
+                log.yellow("Loading a new model...")
+                model = MarsModelFactory.loadNewModel(self.mcfg, self.mcfg.pretrainedBackboneUrl)
+                startEpoch = 0
+
+        # Ensure model is loaded before EMA initialization
+        if model is None:
+             raise RuntimeError("Model failed to initialize.")
+
+        # Initialize EMA if enabled
         if getattr(self.mcfg, 'use_ema', False):
             ema_decay = getattr(self.mcfg, 'ema_decay', 0.9999)
             ema_tau = getattr(self.mcfg, 'ema_tau', 2000)
             self.ema = ModelEMA(model, decay=ema_decay, tau=ema_tau)
             log.green(f"EMA initialized with decay={ema_decay}, tau={ema_tau}")
-        
-        return model, 0
+
+        return model, startEpoch
 
     def initLoss(self, model):
         return model.getTrainLoss()
@@ -117,7 +162,7 @@ class MarsBaseTrainer(object):
             optimizer.step()
 
             if self.ema is not None:
-                self.ema.update(model)  # 每个batch后更新EMA
+                self.ema.update(model)  # Update EMA after each batch
 
             trainLoss += stepLoss.item()
             progressBar.set_postfix(trainLossPerBatch=trainLoss / (batchIndex + 1), backboneFrozen=self.backboneFrozen)
@@ -129,14 +174,13 @@ class MarsBaseTrainer(object):
         return trainLoss
 
     def epochValidation(self, model, loss, dataLoader, epoch):
-        eval_model = self.ema.ema if (self.ema is not None) else model
-        eval_model.setInferenceMode(True)
-        
         if not self.mcfg.epochValidation:
             return np.nan
 
+        eval_model = self.ema.ema if (self.ema is not None) else model
+        eval_model.setInferenceMode(True)
+        
         validationLoss = 0
-        model.setInferenceMode(True)
         numBatches = int(len(dataLoader.dataset) / dataLoader.batch_size)
         progressBar = tqdm(total=numBatches, desc="Epoch {}/{}".format(epoch + 1, self.mcfg.maxEpoch), postfix=dict, mininterval=0.5, ascii=False, ncols=100)
 
@@ -194,16 +238,28 @@ class MarsBaseTrainer(object):
             self.plot_loss_curves()
 
     def epochSave(self, epoch, model, trainLoss, validationLoss):
+        # 保存详细训练信息到 epochInfoFile
+        with open(self.epochInfoFile, "w") as f:
+            f.write("last_saved_epoch={}\n".format(epoch + 1))
+            f.write("train_loss={}\n".format(trainLoss))
+            f.write("validation_loss={}\n".format(validationLoss if not np.isnan(validationLoss) else 'NaN'))
+            f.write("best_loss_epoch={}\n".format(self.bestLossEpoch if not np.isnan(self.bestLossEpoch) else 'NaN'))
+            f.write("best_loss={}\n".format(self.bestLoss if not np.isnan(self.bestLoss) else 'NaN'))
+
+        # 确定要保存的模型（EMA优先）
         save_model = self.ema.ema if (self.ema is not None) else model
-        save_model.save(self.epochCacheFile)
+
+        # 检查是否为最佳验证损失
+        is_best = self.mcfg.epochValidation and (np.isnan(self.bestLoss) or validationLoss < self.bestLoss)
         
-        if self.mcfg.epochValidation and (np.isnan(self.bestLoss) or validationLoss < self.bestLoss):
+        if is_best:
             log.green("Caching best weights at epoch {}...".format(epoch + 1))
             self.bestLoss = validationLoss
-            save_model.save(self.bestCacheFile)  # 保存最佳EMA模型
-
-        with open(self.epochInfoFile, 'w') as file:
-            file.write(str(epoch + 1))
+            self.bestLossEpoch = epoch + 1
+            save_model.save(self.bestCacheFile)  # 保存最佳模型
+        
+        # Always save current epoch weights to epochCacheFile (for resuming training)
+        save_model.save(self.epochCacheFile)
 
     def plot_loss_curves(self):
         epochs = range(1, len(self.train_losses) + 1)
