@@ -26,6 +26,16 @@ def mcfg(tags):
 
     mcfg.paintImages = True
 
+        # Data Augmentation configuration - control aug.py parameters
+    mcfg.augmentation = {
+        'jitter': 0.3,
+        'rescalef': (0.25, 2),
+        'flipProb': 0.5,
+        'huef': 0.1,
+        'satf': 0.7,
+        'valf': 0.4,
+    }
+
     # YOLOv8官方预训练权重配置 - 使用现有的pretrainedBackboneUrl机制
     if "pretrained" in tags:
         mcfg.pretrainedBackboneUrl = "file://yolov8n_converted_backbone.pth"

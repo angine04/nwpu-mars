@@ -66,6 +66,7 @@ class VocDataset(Dataset):
             suffix=mcfg.suffix,
             splitName=splitName,
             selectedClasses=selectedClasses,
+            mcfg=mcfg,
         )
         return DataLoader(
             dataset,
@@ -79,13 +80,24 @@ class VocDataset(Dataset):
             worker_init_fn=partial(VocDataset.workerInit, mcfg.seed)
         )
 
-    def __init__(self, imageDir, annotationDir, classList, inputShape, subset, isTest, fullInfo, suffix, splitName, selectedClasses):
+    def __init__(self, imageDir, annotationDir, classList, inputShape, subset, isTest, fullInfo, suffix, splitName, selectedClasses, mcfg):
         super(VocDataset, self).__init__()
         self.imageDir = imageDir
         self.annotationDir = annotationDir
         self.classList = classList
         self.inputShape = inputShape
-        self.augp = DataAugmentationProcessor(inputShape=inputShape)
+        
+        aug_params = getattr(mcfg, 'augmentation', {})
+        self.augp = DataAugmentationProcessor(
+            inputShape=inputShape,
+            jitter=aug_params.get('jitter', 0.3),
+            rescalef=aug_params.get('rescalef', (0.25, 2)),
+            flipProb=aug_params.get('flipProb', 0.5),
+            huef=aug_params.get('huef', 0.1),
+            satf=aug_params.get('satf', 0.7),
+            valf=aug_params.get('valf', 0.4)
+        )
+        
         self.isTest = isTest
         self.fullInfo = fullInfo
         self.suffix = suffix
