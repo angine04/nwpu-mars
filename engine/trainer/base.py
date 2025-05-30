@@ -198,6 +198,8 @@ class MarsBaseTrainer(object):
         return validationLoss
 
     def run(self):
+        # Set up log file for training
+        log.setLogFile(self.logFile)
         log.cyan("Mars trainer running...")
 
         model, startEpoch = self.initModel()
@@ -241,6 +243,14 @@ class MarsBaseTrainer(object):
             f.write("validation_loss={}\n".format(validationLoss if not np.isnan(validationLoss) else 'NaN'))
             f.write("best_loss_epoch={}\n".format(self.bestLossEpoch if not np.isnan(self.bestLossEpoch) else 'NaN'))
             f.write("best_loss={}\n".format(self.bestLoss if not np.isnan(self.bestLoss) else 'NaN'))
+
+        # Log losses to losses.log file
+        with open(self.lossFile, "a") as f:
+            f.write("epoch={}, train_loss={:.6f}, val_loss={:.6f}\n".format(
+                epoch + 1, 
+                trainLoss, 
+                validationLoss if not np.isnan(validationLoss) else float('nan')
+            ))
 
         # Determine model to save (EMA preferred)
         save_model = self.ema.ema if (self.ema is not None) else model
