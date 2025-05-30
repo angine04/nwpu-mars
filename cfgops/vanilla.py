@@ -76,7 +76,7 @@ def mcfg(tags):
         mcfg.lossWeights = (7.5, 4.0, 1.5)  # box, cls(strong enhanced), dfl
         
     # Balanced Loss Weights - equal emphasis on all components
-    if "balanced" in tags:
+    if "balancedloss" in tags:
         # 平衡的损失权重配置
         mcfg.lossWeights = (2.0, 2.0, 2.0)  # box, cls, dfl (all equal)
 
