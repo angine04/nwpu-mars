@@ -30,6 +30,12 @@ def mcfg(tags):
     if "pretrained" in tags:
         mcfg.pretrainedBackboneUrl = "file://yolov8n_converted_backbone.pth"
 
+    # EMA（指数移动平均）配置 - 可选的训练增强技术
+    if "ema" in tags:
+        mcfg.use_ema = True
+        mcfg.ema_decay = 0.9999  # 推荐的衰减率
+        mcfg.ema_tau = 2000      # 推荐的tau参数
+
     if "full" in tags:
         mcfg.modelName = "base"
         mcfg.maxEpoch = 200
