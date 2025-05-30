@@ -1,60 +1,69 @@
 # engine/trainer/ema.py
 import torch
+import math
 from copy import deepcopy
 
 class ModelEMA:
-    """EMA (Exponential Moving Average) model weight management"""
-    def __init__(self, model, decay=0.9999, tau=2000):
-        # Parameter validation
-        if not (0 <= decay <= 1):
-            raise ValueError(f"EMA decay must be between 0 and 1, got {decay}")
-        if tau <= 0:
-            raise ValueError(f"EMA tau must be positive, got {tau}")
-        
-        self.decay = decay
-        self.tau = tau
-        self.updates = 0
-        
-        # Ensure EMA model is on the same device
-        self.ema = deepcopy(model).eval()
-        for param in self.ema.parameters():
-            param.requires_grad_(False)
+    """Model Exponential Moving Average from https://github.com/rwightman/pytorch-image-models
+    Keep a moving average of everything in the model state_dict (parameters and buffers).
+    This is intended to allow functionality like
+    https://www.tensorflow.org/api_docs/python/tf/train/ExponentialMovingAverage
     
+    A smoothed version of the weights is necessary for some training schemes to perform well.
+    E.g. Google's hyper-params for training MNASNet, MobileNet-V3, EfficientNet, etc that use
+    RMSprop with a short 2.4-3 epoch decay period and slow LR decay rate of .96-.99 requires EMA
+    smoothing of weights to match results. Pay attention to the decay constant you are using
+    relative to your update count per epoch.
+    
+    To keep EMA from using GPU resources, set device='cpu'. This will save a bit of memory but
+    disable validation of the EMA weights. Validation will have to be done manually in a separate
+    process, or after the training stops converging.
+    
+    This class is sensitive where it is initialized in the sequence of model init,
+    GPU assignment and distributed training wrappers.
+    """
+    
+    def __init__(self, model, decay=0.9999, tau=2000, updates=0):
+        """
+        Args:
+            model (nn.Module): model to apply EMA to
+            decay (float): decay factor for exponential moving average
+            tau (int): number of updates over which decay ramps up from 0 to decay
+            updates (int): number of EMA updates already performed
+        """
+        # Create EMA
+        self.ema = deepcopy(self.de_parallel(model)).eval()  # FP32 EMA
+        self.updates = updates  # number of EMA updates
+        self.decay = lambda x: decay * (1 - math.exp(-x / tau))  # decay exponential ramp (to help early epochs)
+        for p in self.ema.parameters():
+            p.requires_grad_(False)
+
     def update(self, model):
-        """Update EMA model with current model parameters"""
-        self.updates += 1
-        
-        # Device compatibility check
-        if hasattr(model, 'outputDevice'):
-            device = model.outputDevice()
-        else:
-            device = next(model.parameters()).device
-        
-        if self.ema.parameters().__next__().device != device:
-            self.ema = self.ema.to(device)
-        
-        # Dynamic decay calculation
-        decay = self.decay * (1 - torch.exp(-torch.tensor(self.updates / self.tau, dtype=torch.float32)))
-        
+        """Update EMA parameters"""
         with torch.no_grad():
-            for ema_param, model_param in zip(self.ema.parameters(), model.parameters()):
-                ema_param.data.mul_(decay).add_(model_param.data, alpha=1 - decay)
-    
-    def copy_attr(self, model):
-        """Copy non-parameter attributes from original model (if needed)"""
-        # Copy some important model attributes
-        for attr in ['stride', 'nc', 'names', 'anchors']:
-            if hasattr(model, attr):
-                setattr(self.ema, attr, getattr(model, attr))
-    
-    def clone_model_attr(self, model):
-        """Clone non-parameter attributes from model"""
-        for k, v in model.__dict__.items():
-            if not k.startswith('_') and k not in ['training']:
-                try:
-                    setattr(self.ema, k, v)
-                except (AttributeError, TypeError):
-                    pass
-    
-    def __repr__(self):
-        return f'ModelEMA(decay={self.decay}, tau={self.tau}, updates={self.updates})'
+            self.updates += 1
+            d = self.decay(self.updates)
+
+            msd = self.de_parallel(model).state_dict()  # model state_dict
+            for k, v in self.ema.state_dict().items():
+                if v.dtype.is_floating_point:
+                    v *= d
+                    v += (1 - d) * msd[k].detach()
+
+    def update_attr(self, model, include=(), exclude=('process_group', 'reducer')):
+        """Update EMA attributes"""
+        self.copy_attr(self.ema, model, include, exclude)
+
+    @staticmethod
+    def de_parallel(model):
+        """De-parallelize a model: returns single-GPU model if model is of type DP or DDP"""
+        return model.module if hasattr(model, 'module') else model
+
+    @staticmethod  
+    def copy_attr(a, b, include=(), exclude=()):
+        """Copy attributes from b to a, options to only include [...] and to exclude [...]"""
+        for k, v in b.__dict__.items():
+            if (len(include) and k not in include) or k.startswith('_') or k in exclude:
+                continue
+            else:
+                setattr(a, k, v) 
