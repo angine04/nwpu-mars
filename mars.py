@@ -216,21 +216,72 @@ if __name__ == "__main__":
     is_legacy_format = any(arg.startswith('-') and arg in ['-train', '-eval', '-pipe', '-nobuf'] 
                           for arg in sys.argv[1:])
     
-    if is_legacy_format or (len(sys.argv) >= 2 and sys.argv[1] in ['train', 'eval', 'pipe'] and len(sys.argv) <= 3):
+    # 检查是否有增强参数（即使在传统格式中）
+    has_enhanced_args = any(arg.startswith('--') for arg in sys.argv[1:])
+    
+    if is_legacy_format or (len(sys.argv) >= 2 and sys.argv[1] in ['train', 'eval', 'pipe'] and len(sys.argv) <= 3 and not has_enhanced_args):
         # 传统格式兼容模式
         if len(sys.argv) >= 3 and not sys.argv[2].startswith('-'):
             # python mars.py train vanilla.nano.fast.pretrained
-            mode = sys.argv[1]
+            # python mars.py -pipe vanilla.nano.fast.pretrained.dynclsweight
+            raw_mode = sys.argv[1]
             config_name = sys.argv[2]
             nobuf = '-nobuf' in sys.argv
+            
+            # 转换模式名称：移除前导连字符
+            if raw_mode.startswith('-'):
+                mode = raw_mode[1:]  # 移除 '-' 前缀
+            else:
+                mode = raw_mode
         else:
             # python mars.py -train -nobuf
             mode, nobuf, _, _ = parse_legacy_args()
-            config_name = "vanilla.nano.fast.pretrained"
+            config_name = "vanilla.nano.fast.pretrained.focalweight"
         
         root = "/home/v5/Mars"
         
-        print(f"使用传统兼容模式: {mode} {config_name}")
+        # 检查是否有增强参数需要处理
+        dry_run = '--dry-run' in sys.argv
+        verbose = '--verbose' in sys.argv or '-v' in sys.argv
+        
+        if verbose:
+            print(f"使用传统兼容模式: {mode} {config_name}")
+        else:
+            print(f"使用传统兼容模式: {mode} {config_name}")
+        
+        # 创建引擎
+        engine = MarsEngine(
+            mode=mode,
+            cfgname=config_name,
+            root=root,
+            nobuf=nobuf,
+        )
+        
+        # 如果是干运行模式，显示配置并退出
+        if dry_run:
+            print("=" * 60)
+            print("MARS YOLOv8 配置摘要 (传统兼容模式)")
+            print("=" * 60)
+            print(f"运行模式: {mode}")
+            print(f"配置名称: {config_name}")
+            print(f"项目根目录: {root}")
+            print(f"禁用缓存: {nobuf}")
+            print(f"设备: {engine.mcfg.device}")
+            print(f"批次大小: {engine.mcfg.batchSize}")
+            print(f"最大轮数: {engine.mcfg.maxEpoch}")
+            print(f"学习率: {engine.mcfg.baseLearningRate}")
+            print(f"损失权重: {engine.mcfg.lossWeights}")
+            if hasattr(engine.mcfg, 'use_ema') and engine.mcfg.use_ema:
+                print(f"EMA启用: True")
+            if hasattr(engine.mcfg, 'use_early_stopping') and engine.mcfg.use_early_stopping:
+                print(f"Early Stopping启用: True (耐心值: {engine.mcfg.early_stopping_patience})")
+            if hasattr(engine.mcfg, 'use_focal_cls_weight') and engine.mcfg.use_focal_cls_weight:
+                print(f"Focal Loss权重调整启用: True")
+            if hasattr(engine.mcfg, 'use_dynamic_cls_weight') and engine.mcfg.use_dynamic_cls_weight:
+                print(f"动态分类权重调整启用: True")
+            print("=" * 60)
+            print("干运行模式，退出...")
+            sys.exit(0)
         
     else:
         # 新的增强参数格式
@@ -245,18 +296,16 @@ if __name__ == "__main__":
         if args.verbose:
             print(f"使用增强参数模式")
             print(f"解析的配置名称: {config_name}")
-    
-    # 创建引擎
-    engine = MarsEngine(
-        mode=mode,
-        cfgname=config_name,
-        root=root,
-        nobuf=nobuf,
-    )
-    
-    # 如果使用增强模式，应用参数覆盖
-    if not is_legacy_format and not (len(sys.argv) >= 2 and sys.argv[1] in ['train', 'eval', 'pipe'] and len(sys.argv) <= 3):
-        args = parse_enhanced_args()
+        
+        # 创建引擎
+        engine = MarsEngine(
+            mode=mode,
+            cfgname=config_name,
+            root=root,
+            nobuf=nobuf,
+        )
+        
+        # 应用参数覆盖
         engine.mcfg = apply_parameter_overrides(engine.mcfg, args)
         
         if args.verbose or args.dry_run:
