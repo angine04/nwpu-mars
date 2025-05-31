@@ -177,6 +177,19 @@ class SwinTransformerBlock(nn.Module):
             # 如果窗口大小大于输入分辨率，我们不分割窗口
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
+        
+        # 确保窗口大小能整除输入分辨率
+        H, W = self.input_resolution
+        while H % self.window_size != 0 or W % self.window_size != 0:
+            self.window_size -= 1
+            if self.window_size < 1:
+                self.window_size = 1
+                break
+        
+        # 如果调整了窗口大小，可能需要调整移位大小
+        if self.shift_size >= self.window_size:
+            self.shift_size = self.window_size // 2
+            
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
         
         self.norm1 = norm_layer(dim)
@@ -192,23 +205,30 @@ class SwinTransformerBlock(nn.Module):
         if self.shift_size > 0:
             # 计算SW-MSA的注意力掩码
             H, W = self.input_resolution
-            img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
-            h_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
-            w_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
-            cnt = 0
-            for h in h_slices:
-                for w in w_slices:
-                    img_mask[:, h, w, :] = cnt
-                    cnt += 1
-            
-            mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
-            mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-            attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-            attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+            # 确保H和W能被window_size整除
+            if H % self.window_size != 0 or W % self.window_size != 0:
+                # 如果不能整除，调整窗口大小
+                self.window_size = min(H, W)
+                self.shift_size = 0  # 禁用移位
+                attn_mask = None
+            else:
+                img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
+                h_slices = (slice(0, -self.window_size),
+                            slice(-self.window_size, -self.shift_size),
+                            slice(-self.shift_size, None))
+                w_slices = (slice(0, -self.window_size),
+                            slice(-self.window_size, -self.shift_size),
+                            slice(-self.shift_size, None))
+                cnt = 0
+                for h in h_slices:
+                    for w in w_slices:
+                        img_mask[:, h, w, :] = cnt
+                        cnt += 1
+                
+                mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+                mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
         else:
             attn_mask = None
         
