@@ -57,6 +57,16 @@ class ModelConfig(object):
         self.min_cls_weight = 0.1  # Minimum classification weight
         self.max_cls_weight = 5.0  # Maximum classification weight
         
+        # Varifocal Loss configuration
+        self.use_varifocal_loss = False
+        self.varifocal_gamma = 2.0  # Varifocal loss gamma parameter
+        self.varifocal_alpha = 0.75  # Varifocal loss alpha parameter
+        
+        # Standard Focal Loss configuration  
+        self.use_focal_loss = False
+        self.focal_gamma = 1.5  # Standard focal loss gamma parameter
+        self.focal_alpha = 0.25  # Standard focal loss alpha parameter
+        
         self.startEpoch = 0
         self.maxEpoch = 200
         self.backboneFreezeEpochs = []

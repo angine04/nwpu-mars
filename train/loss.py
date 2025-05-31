@@ -1,8 +1,78 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast
 from misc.bbox import bboxDecode, iou, bbox2dist
 from train.tal import TaskAlignedAssigner
+
+
+class VarifocalLoss(nn.Module):
+    """
+    Varifocal loss by Zhang et al.
+
+    Implements the Varifocal Loss function for addressing class imbalance in object detection by focusing on
+    hard-to-classify examples and balancing positive/negative samples.
+
+    Attributes:
+        gamma (float): The focusing parameter that controls how much the loss focuses on hard-to-classify examples.
+        alpha (float): The balancing factor used to address class imbalance.
+
+    References:
+        https://arxiv.org/abs/2008.13367
+    """
+
+    def __init__(self, gamma: float = 2.0, alpha: float = 0.75):
+        """Initialize the VarifocalLoss class with focusing and balancing parameters."""
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+
+    def forward(self, pred_score: torch.Tensor, gt_score: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+        """Compute varifocal loss between predictions and ground truth."""
+        weight = self.alpha * pred_score.sigmoid().pow(self.gamma) * (1 - label) + gt_score * label
+        with torch.amp.autocast('cuda', enabled=False):
+            loss = (
+                (F.binary_cross_entropy_with_logits(pred_score.float(), gt_score.float(), reduction="none") * weight)
+                .mean(1)
+                .sum()
+            )
+        return loss
+
+
+class FocalLoss(nn.Module):
+    """
+    Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5).
+
+    Implements the Focal Loss function for addressing class imbalance by down-weighting easy examples and focusing
+    on hard negatives during training.
+
+    Attributes:
+        gamma (float): The focusing parameter that controls how much the loss focuses on hard-to-classify examples.
+        alpha (torch.Tensor): The balancing factor used to address class imbalance.
+    """
+
+    def __init__(self, gamma: float = 1.5, alpha: float = 0.25):
+        """Initialize FocalLoss class with focusing and balancing parameters."""
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = torch.tensor(alpha)
+
+    def forward(self, pred: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+        """Calculate focal loss with modulating factors for class imbalance."""
+        loss = F.binary_cross_entropy_with_logits(pred, label, reduction="none")
+        # p_t = torch.exp(-loss)
+        # loss *= self.alpha * (1.000001 - p_t) ** self.gamma  # non-zero power for gradient stability
+
+        # TF implementation https://github.com/tensorflow/addons/blob/v0.7.1/tensorflow_addons/losses/focal_loss.py
+        pred_prob = pred.sigmoid()  # prob from logits
+        p_t = label * pred_prob + (1 - label) * (1 - pred_prob)
+        modulating_factor = (1.0 - p_t) ** self.gamma
+        loss *= modulating_factor
+        if (self.alpha > 0).any():
+            self.alpha = self.alpha.to(device=pred.device, dtype=pred.dtype)
+            alpha_factor = label * self.alpha + (1 - label) * (1 - self.alpha)
+            loss *= alpha_factor
+        return loss.mean(1).sum()
 
 
 class DFLoss(nn.Module):
@@ -62,7 +132,24 @@ class DetectionLoss(object):
         self.mcfg= mcfg
         self.layerStrides = model.layerStrides
         self.assigner = TaskAlignedAssigner(topk=self.mcfg.talTopk, num_classes=self.mcfg.nc, alpha=0.5, beta=6.0)
-        self.bce = nn.BCEWithLogitsLoss(reduction="none")
+        
+        # 选择分类损失函数
+        self.use_varifocal = getattr(mcfg, 'use_varifocal_loss', False)
+        self.use_focal = getattr(mcfg, 'use_focal_loss', False)
+        
+        if self.use_varifocal:
+            self.cls_loss = VarifocalLoss(
+                gamma=getattr(mcfg, 'varifocal_gamma', 2.0),
+                alpha=getattr(mcfg, 'varifocal_alpha', 0.75)
+            )
+        elif self.use_focal:
+            self.cls_loss = FocalLoss(
+                gamma=getattr(mcfg, 'focal_gamma', 1.5),
+                alpha=getattr(mcfg, 'focal_alpha', 0.25)
+            )
+        else:
+            self.cls_loss = nn.BCEWithLogitsLoss(reduction="none")
+            
         self.bboxLoss = BboxLoss(self.mcfg.regMax).to(self.mcfg.device)
 
     def preprocess(self, targets, batchSize, scaleTensor):
@@ -127,7 +214,24 @@ class DetectionLoss(object):
         targetScoresSum = max(targetScores.sum(), 1)
         
         # 分类损失
-        loss[1] = self.bce(predClassScores, targetScores.to(predClassScores.dtype)).sum() / targetScoresSum  # BCE
+        if self.use_varifocal:
+            # Varifocal Loss需要IoU质量分数作为gt_score
+            if fgMask.sum():
+                # 计算正样本的IoU质量分数
+                iou_scores = iou(predBboxes[fgMask], targetBboxes[fgMask], xywh=False, CIoU=False).detach().clamp(0)
+                # 为正样本设置IoU质量分数，负样本保持0
+                quality_scores = targetScores.clone()
+                quality_scores[fgMask] = quality_scores[fgMask] * iou_scores.unsqueeze(-1)
+                loss[1] = self.cls_loss(predClassScores, quality_scores.to(predClassScores.dtype), targetScores.to(predClassScores.dtype)) / targetScoresSum
+            else:
+                # 没有正样本时，使用标准BCE
+                loss[1] = F.binary_cross_entropy_with_logits(predClassScores, targetScores.to(predClassScores.dtype), reduction="none").sum() / targetScoresSum
+        elif self.use_focal:
+            # Focal Loss使用标准输入
+            loss[1] = self.cls_loss(predClassScores, targetScores.to(predClassScores.dtype)) / targetScoresSum
+        else:
+            # 标准BCE Loss
+            loss[1] = self.cls_loss(predClassScores, targetScores.to(predClassScores.dtype)).sum() / targetScoresSum
         
         # 边界框损失
         if fgMask.sum():
@@ -182,7 +286,25 @@ class DetectionLoss(object):
         targetScoresSum = max(targetScores.sum(), 1)
         
         # 分类损失（未加权）
-        cls_loss_raw = self.bce(predClassScores, targetScores.to(predClassScores.dtype)).sum() / targetScoresSum
+        if self.use_varifocal:
+            # Varifocal Loss需要IoU质量分数作为gt_score
+            if fgMask.sum():
+                # 计算正样本的IoU质量分数
+                iou_scores = iou(predBboxes[fgMask], targetBboxes[fgMask], xywh=False, CIoU=False).detach().clamp(0)
+                # 为正样本设置IoU质量分数，负样本保持0
+                quality_scores = targetScores.clone()
+                quality_scores[fgMask] = quality_scores[fgMask] * iou_scores.unsqueeze(-1)
+                cls_loss_raw = self.cls_loss(predClassScores, quality_scores.to(predClassScores.dtype), targetScores.to(predClassScores.dtype)) / targetScoresSum
+            else:
+                # 没有正样本时，使用标准BCE
+                cls_loss_raw = F.binary_cross_entropy_with_logits(predClassScores, targetScores.to(predClassScores.dtype), reduction="none").sum() / targetScoresSum
+        elif self.use_focal:
+            # Focal Loss使用标准输入
+            cls_loss_raw = self.cls_loss(predClassScores, targetScores.to(predClassScores.dtype)) / targetScoresSum
+        else:
+            # 标准BCE Loss
+            cls_loss_raw = self.cls_loss(predClassScores, targetScores.to(predClassScores.dtype)).sum() / targetScoresSum
+        
         loss[1] = cls_loss_raw
         
         # 边界框损失（未加权）

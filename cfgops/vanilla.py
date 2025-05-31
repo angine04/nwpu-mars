@@ -121,6 +121,30 @@ def mcfg(tags):
         mcfg.min_cls_weight = 0.05
         mcfg.max_cls_weight = 10.0
 
+    # Varifocal Loss - quality-aware focal loss for dense object detection
+    if "varifocal" in tags:
+        mcfg.use_varifocal_loss = True
+        mcfg.varifocal_gamma = 2.0  # Focusing parameter
+        mcfg.varifocal_alpha = 0.75  # Balancing factor
+        
+    # Strong Varifocal Loss - more aggressive varifocal adjustment
+    if "varifocal2x" in tags:
+        mcfg.use_varifocal_loss = True
+        mcfg.varifocal_gamma = 3.0  # Higher gamma for stronger focusing
+        mcfg.varifocal_alpha = 0.8   # Higher alpha for better balance
+        
+    # Standard Focal Loss - classic focal loss implementation
+    if "focalloss" in tags:
+        mcfg.use_focal_loss = True
+        mcfg.focal_gamma = 1.5  # Standard gamma
+        mcfg.focal_alpha = 0.25  # Standard alpha
+        
+    # Strong Focal Loss - more aggressive focal loss
+    if "focalloss2x" in tags:
+        mcfg.use_focal_loss = True
+        mcfg.focal_gamma = 2.5  # Higher gamma for stronger effect
+        mcfg.focal_alpha = 0.3   # Higher alpha
+
     # Enable additional data augmentation features via 'aug' tag
     if "aug" in tags:
         mcfg.augmentation['use_erase'] = True # Enable erase
@@ -159,6 +183,11 @@ def mcfg(tags):
     if "full" in tags:
         mcfg.modelName = "base"
         mcfg.maxEpoch = 200
+        mcfg.backboneFreezeEpochs = [x for x in range(0, 100)]
+
+    if "long" in tags:
+        mcfg.modelName = "base"
+        mcfg.maxEpoch = 20000
         mcfg.backboneFreezeEpochs = [x for x in range(0, 100)]
 
     if "fast" in tags:
