@@ -217,8 +217,14 @@ class DetectionLoss(object):
         if self.use_varifocal:
             # Varifocal Loss需要IoU质量分数作为gt_score
             if fgMask.sum():
-                # 计算正样本的IoU质量分数
-                iou_scores = iou(predBboxes[fgMask], targetBboxes[fgMask], xywh=False, CIoU=False).detach().clamp(0)
+                # 计算正样本的IoU质量分数 - 使用高效的逐元素IoU计算
+                pred_boxes_fg = predBboxes[fgMask]  # (num_positive, 4)
+                target_boxes_fg = targetBboxes[fgMask]  # (num_positive, 4)
+                
+                # 直接计算逐元素IoU，避免广播
+                # 将两个张量reshape为相同形状以确保逐元素计算
+                iou_scores = self._compute_elementwise_iou(pred_boxes_fg, target_boxes_fg)
+                
                 # 为正样本设置IoU质量分数，负样本保持0
                 quality_scores = targetScores.clone()
                 quality_scores[fgMask] = quality_scores[fgMask] * iou_scores.unsqueeze(-1)
@@ -289,8 +295,14 @@ class DetectionLoss(object):
         if self.use_varifocal:
             # Varifocal Loss需要IoU质量分数作为gt_score
             if fgMask.sum():
-                # 计算正样本的IoU质量分数
-                iou_scores = iou(predBboxes[fgMask], targetBboxes[fgMask], xywh=False, CIoU=False).detach().clamp(0)
+                # 计算正样本的IoU质量分数 - 使用高效的逐元素IoU计算
+                pred_boxes_fg = predBboxes[fgMask]  # (num_positive, 4)
+                target_boxes_fg = targetBboxes[fgMask]  # (num_positive, 4)
+                
+                # 直接计算逐元素IoU，避免广播
+                # 将两个张量reshape为相同形状以确保逐元素计算
+                iou_scores = self._compute_elementwise_iou(pred_boxes_fg, target_boxes_fg)
+                
                 # 为正样本设置IoU质量分数，负样本保持0
                 quality_scores = targetScores.clone()
                 quality_scores[fgMask] = quality_scores[fgMask] * iou_scores.unsqueeze(-1)
@@ -321,3 +333,42 @@ class DetectionLoss(object):
         weighted_loss[2] *= self.mcfg.lossWeights[2]  # dfl
 
         return weighted_loss.sum(), loss[0].item(), loss[1].item(), loss[2].item()
+
+    def _compute_elementwise_iou(self, boxes1, boxes2):
+        """
+        计算两组框的逐元素IoU（对应位置的IoU）。
+        
+        Args:
+            boxes1 (torch.Tensor): 形状为 (N, 4) 的张量，表示预测框
+            boxes2 (torch.Tensor): 形状为 (N, 4) 的张量，表示目标框
+            
+        Returns:
+            torch.Tensor: 形状为 (N,) 的张量，包含对应位置的IoU值
+        """
+        assert boxes1.shape == boxes2.shape, f"boxes1 shape {boxes1.shape} != boxes2 shape {boxes2.shape}"
+        
+        # 直接计算逐元素IoU，使用xyxy格式
+        # 获取边界框坐标
+        b1_x1, b1_y1, b1_x2, b1_y2 = boxes1.chunk(4, -1)
+        b2_x1, b2_y1, b2_x2, b2_y2 = boxes2.chunk(4, -1)
+        
+        # 计算交集
+        inter_x1 = torch.max(b1_x1, b2_x1)
+        inter_y1 = torch.max(b1_y1, b2_y1)
+        inter_x2 = torch.min(b1_x2, b2_x2)
+        inter_y2 = torch.min(b1_y2, b2_y2)
+        
+        # 交集面积
+        inter_area = (inter_x2 - inter_x1).clamp(0) * (inter_y2 - inter_y1).clamp(0)
+        
+        # 计算各自面积
+        area1 = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
+        area2 = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
+        
+        # 并集面积
+        union_area = area1 + area2 - inter_area + 1e-7
+        
+        # IoU
+        iou_scores = (inter_area / union_area).squeeze(-1).detach().clamp(0)
+        
+        return iou_scores
