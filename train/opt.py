@@ -9,6 +9,8 @@ class MarsOptimizerFactory(object):
         match mcfg.optimizerType:
             case "SGD":
                 return MarsOptimizerFactory.initSgdOptimizer(mcfg, model)
+            case "AdamW":
+                return MarsOptimizerFactory.initAdamWOptimizer(mcfg, model)
             case other:
                 raise ValueError("Invalid optimizer type: {}".format(mcfg.optimizerType))
 
@@ -38,4 +40,36 @@ class MarsOptimizerFactory(object):
         )
         opt.add_param_group({"params": weights, "weight_decay": mcfg.optimizerWeightDecay})
         opt.add_param_group({"params": bias})
+        return opt
+
+    @staticmethod
+    def initAdamWOptimizer(mcfg, model):
+        """
+        Initialize AdamW optimizer with proper parameter grouping.
+        AdamW is particularly effective for transformer-based models and modern deep learning.
+        """
+        weights, bnWeights, bias = MarsOptimizerFactory.getModelParameterGroups(model)
+        
+        # AdamW optimizer with parameter groups
+        # Group 1: BatchNorm weights (no weight decay)
+        opt = optim.AdamW(
+            bnWeights,
+            lr=mcfg.baseLearningRate,
+            betas=getattr(mcfg, 'optimizerBetas', (0.9, 0.999)),
+            eps=getattr(mcfg, 'optimizerEps', 1e-8),
+            weight_decay=0.0,  # No weight decay for BN weights
+        )
+        
+        # Group 2: Regular weights (with weight decay)
+        opt.add_param_group({
+            "params": weights, 
+            "weight_decay": mcfg.optimizerWeightDecay
+        })
+        
+        # Group 3: Bias parameters (no weight decay)
+        opt.add_param_group({
+            "params": bias,
+            "weight_decay": 0.0
+        })
+        
         return opt

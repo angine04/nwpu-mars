@@ -120,7 +120,9 @@ class VocDataset(Dataset):
             cropArea=aug_params.get('cropArea', (0.5, 1.0)),
             use_mixup=aug_params.get('use_mixup', False),
             mixupProb=aug_params.get('mixupProb', 0.0),
-            mixupAlpha=aug_params.get('mixupAlpha', 1.5)
+            mixupAlpha=aug_params.get('mixupAlpha', 1.5),
+            use_mosaic=aug_params.get('use_mosaic', False),
+            mosaicProb=aug_params.get('mosaicProb', 0.0)
         )
         
         self.isTest = isTest
@@ -193,8 +195,43 @@ class VocDataset(Dataset):
         if self.isTest:
             imageData_np, boxList_np, tinfo = self.augp.processSimple(image, boxList)
         else:
-            # Apply Mixup first if enabled and lucky
-            if self.augp.use_mixup and random.random() < self.augp.mixupProb:
+            # Apply Mosaic first if enabled and lucky
+            if self.augp.use_mosaic and random.random() < self.augp.mosaicProb:
+                # Get 3 additional random images and their labels for mosaic (total 4 images)
+                additional_indices = []
+                additional_images = []
+                additional_boxLists = []
+                
+                # Get 3 more images (we already have the current one)
+                for _ in range(3):
+                    jj = random.randint(0, len(self.imageFiles) - 1)
+                    additional_indices.append(jj)
+                    
+                    imgFile_add = self.imageFiles[jj]
+                    image_add = img.loadRGBImage(imgFile_add)
+                    additional_images.append(image_add)
+                    
+                    annFile_add = self.annotationFiles[jj]
+                    boxList_add = xml.XmlBbox.loadXmlObjectList(annFile_add, self.classList, selectedClasses=self.selectedClasses, asArray=True)
+                    additional_boxLists.append(np.array(boxList_add))
+                
+                # Prepare all 4 images and box lists for mosaic
+                all_images = [image] + additional_images
+                all_boxLists = [np.array(boxList)] + additional_boxLists
+                
+                # Apply Mosaic augmentation
+                imageData_np, boxList_np = self.augp.randomMosaic(all_images, all_boxLists)
+                tinfo = None  # Tinfo is complex for mosaic, set to None for now
+                
+                # Apply HSV adjustment and erasing on the mosaic image
+                if self.augp.use_hsv:
+                    imageData_np = hsvAdjust(imageData_np, self.augp.huef, self.augp.satf, self.augp.valf)
+
+                if self.augp.use_erase:
+                    imageData_np = self.augp.randomErasing(imageData_np)
+                    
+            # Apply Mixup if enabled and lucky (and not already applied Mosaic)
+            elif self.augp.use_mixup and random.random() < self.augp.mixupProb:
                 # Get a random image and its labels from the dataset
                 jj = random.randint(0, len(self.imageFiles) - 1)
                 imgFile2 = self.imageFiles[jj]
@@ -262,8 +299,8 @@ class VocDataset(Dataset):
                 if self.augp.use_erase:
                     imageData_np = self.augp.randomErasing(imageData_np)
 
-            else: # No Mixup
-                # Original processEnhancement flow (without Mixup)
+            else: # No Mosaic or Mixup
+                # Original processEnhancement flow (without Mosaic/Mixup)
                 boxList_np = np.array(boxList) # Convert original boxList to numpy
 
                 targetHeight, targetWidth = self.inputShape

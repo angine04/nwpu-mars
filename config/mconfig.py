@@ -26,11 +26,13 @@ class ModelConfig(object):
         self.suffix = ".jpg"
 
         # model setup
-        self.modelName = "base" # distillation
+        self.modelName = "base"
         self.phase = "nano"
+        self.backbone_type = "csp"  # 'csp' for CSP Darknet, 'swin' for Swin Transformer
         self.pretrainedBackboneUrl = None
         self.inputShape = (640, 640)
         self.regMax = 16
+        self.nc = 20
 
         # distillation model setup
         self.teacherModelFile = None
@@ -39,7 +41,7 @@ class ModelConfig(object):
 
         # train setup
         self.talTopk = 10
-        self.lossWeights = (7.5, 5, 1.5) # box, cls, dfl
+        self.lossWeights = (7.5, 0.5, 1.5) # box, cls, dfl
         
         # Dynamic classification loss weight adjustment
         self.use_dynamic_cls_weight = False
@@ -63,6 +65,9 @@ class ModelConfig(object):
         self.optimizerType = "SGD"
         self.optimizerMomentum = 0.937
         self.optimizerWeightDecay = 5e-4
+        # AdamW optimizer parameters
+        self.optimizerBetas = (0.9, 0.999)  # AdamW beta parameters (beta1, beta2)
+        self.optimizerEps = 1e-8  # AdamW epsilon parameter for numerical stability
         self.schedulerType = "COS"
         self.baseLearningRate = 1e-2
         self.minLearningRate = self.baseLearningRate * 1e-2
@@ -94,7 +99,6 @@ class ModelConfig(object):
         self.root = None
         self.cfgname = None
         self.nobuf = False
-        self.nc = None
 
     def enrichTags(self, tags):
         for tag in tags:

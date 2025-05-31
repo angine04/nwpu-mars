@@ -45,6 +45,15 @@ def mcfg(tags):
         'use_erase': False, # Toggle: Random erasing
         'use_crop': False, # Toggle: Random cropping
         'cropArea': (0.5, 1.0), # Crop area ratio range
+        
+        # MixUp augmentation
+        'use_mixup': False, # Toggle: MixUp augmentation
+        'mixupProb': 0.0, # Probability of applying MixUp
+        'mixupAlpha': 1.5, # MixUp alpha parameter
+        
+        # Mosaic augmentation
+        'use_mosaic': False, # Toggle: Mosaic augmentation
+        'mosaicProb': 0.0, # Probability of applying Mosaic
     }
 
     # YOLOv8官方预训练权重配置 - 使用现有的pretrainedBackboneUrl机制
@@ -84,16 +93,16 @@ def mcfg(tags):
     if "dynclsweight" in tags:
         mcfg.use_dynamic_cls_weight = True
         mcfg.cls_weight_schedule = 'linear'  # Linear increase
-        mcfg.cls_weight_start = 0.5  # Start with default weight
-        mcfg.cls_weight_end = 3.0    # End with enhanced weight
+        mcfg.cls_weight_start = 2.0  # Start with default weight
+        mcfg.cls_weight_end = 4.0    # End with enhanced weight
         mcfg.cls_weight_warmup_epochs = 100  # Gradual increase over 100 epochs
         
     # Cosine Dynamic Classification Weight - smooth cosine increase
     if "cosclsweight" in tags:
         mcfg.use_dynamic_cls_weight = True
         mcfg.cls_weight_schedule = 'cosine'  # Cosine increase
-        mcfg.cls_weight_start = 0.5
-        mcfg.cls_weight_end = 2.5
+        mcfg.cls_weight_start = 2.0
+        mcfg.cls_weight_end = 4.0
         mcfg.cls_weight_warmup_epochs = 80
 
     # Focal Loss Weight Adjustment - adaptive weight based on classification performance
@@ -121,6 +130,31 @@ def mcfg(tags):
         mcfg.augmentation['use_mixup'] = True # Enable Mixup
         mcfg.augmentation['mixupProb'] = 1.0 # Set Mixup probability
         mcfg.augmentation['mixupAlpha'] = 1.5 # Set Mixup alpha
+        mcfg.augmentation['use_mosaic'] = True # Enable Mosaic
+        mcfg.augmentation['mosaicProb'] = 0.5 # Set Mosaic probability (50% chance)
+
+    # Enhanced NMS Configuration - Class-Specific Non-Maximum Suppression
+    if "enhancednms" in tags:
+        mcfg.use_enhanced_nms = True  # Enable class-specific NMS
+    else:
+        mcfg.use_enhanced_nms = False  # Use traditional class-agnostic NMS by default
+
+    # AdamW Optimizer Configuration - Modern adaptive optimizer
+    if "adamw" in tags:
+        mcfg.optimizerType = "AdamW"
+        mcfg.baseLearningRate = 1e-3  # Lower learning rate for AdamW (typical range: 1e-4 to 1e-3)
+        mcfg.optimizerWeightDecay = 1e-2  # Higher weight decay for AdamW (typical: 1e-2 to 1e-1)
+        mcfg.optimizerBetas = (0.9, 0.999)  # Standard AdamW beta parameters
+        mcfg.optimizerEps = 1e-8  # Numerical stability parameter
+
+    # Swin Transformer Backbone Configuration - Vision Transformer backbone
+    if "swin" in tags:
+        mcfg.backbone_type = "swin"
+        # Swin Transformer通常需要更小的学习率
+        if mcfg.optimizerType == "SGD":
+            mcfg.baseLearningRate = 5e-3  # 降低SGD学习率
+        elif mcfg.optimizerType == "AdamW":
+            mcfg.baseLearningRate = 5e-4  # 降低AdamW学习率
 
     if "full" in tags:
         mcfg.modelName = "base"

@@ -4,6 +4,7 @@ import torch.nn as nn
 from misc.log import log
 from misc.bbox import makeAnchors
 from model.base.backbone import Backbone
+from model.base.swin_backbone import SwinBackbone
 from model.base.neck import Neck
 from model.base.head import DetectHead
 
@@ -47,7 +48,16 @@ class YoloModel(nn.Module):
 
         # model layes
         w, r, n = YoloModelPhaseSetup.getModelWRN(mcfg.phase)
-        self.backbone = Backbone(w, r, n)
+        
+        # 选择backbone类型
+        backbone_type = getattr(mcfg, 'backbone_type', 'csp')  # 默认使用CSP backbone
+        if backbone_type == 'swin':
+            log.inf("Using Swin Transformer backbone")
+            self.backbone = SwinBackbone(w, r, n)
+        else:
+            log.inf("Using CSP Darknet backbone")
+            self.backbone = Backbone(w, r, n)
+            
         self.neck = Neck(w, r, n)
         self.head = DetectHead(w, r, self.mcfg.nc, self.mcfg.regMax)
 

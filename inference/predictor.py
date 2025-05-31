@@ -1,5 +1,5 @@
 import torch
-from misc.bbox import bboxDecode, nonMaxSuppression
+from misc.bbox import bboxDecode, nonMaxSuppression, improvedNonMaxSuppression
 
 
 class DetectionPredictor(object):
@@ -23,12 +23,24 @@ class DetectionPredictor(object):
         predBboxes = bboxDecode(self.model.anchorPoints, predBoxDistribution, self.model.proj, xywh=False) # (batchSize, 8400, 4)
         predBboxes = predBboxes * self.model.anchorStrides
 
-        results = nonMaxSuppression(
-            predClassScores=predClassScores,
-            predBboxes=predBboxes,
-            scoreThres=0.2,
-            iouThres=0.4,
-            maxDetect=50,
-        )
+        # Choose NMS method based on configuration
+        if hasattr(self.mcfg, 'use_enhanced_nms') and self.mcfg.use_enhanced_nms:
+            # Use class-specific enhanced NMS
+            results = improvedNonMaxSuppression(
+                predClassScores=predClassScores,
+                predBboxes=predBboxes,
+                scoreThres=0.2,
+                iouThres=0.4,
+                maxDetect=50,
+            )
+        else:
+            # Use traditional class-agnostic NMS
+            results = nonMaxSuppression(
+                predClassScores=predClassScores,
+                predBboxes=predBboxes,
+                scoreThres=0.2,
+                iouThres=0.4,
+                maxDetect=50,
+            )
 
         return results

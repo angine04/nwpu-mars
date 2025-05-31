@@ -175,3 +175,72 @@ def nonMaxSuppression(
         outputList[i] = result
 
     return outputList
+
+
+def improvedNonMaxSuppression(
+    predClassScores,
+    predBboxes,
+    scoreThres,
+    iouThres,
+    maxDetect,
+):
+    """
+    Class-Specific Non-Maximum Suppression
+    
+    Parameters shape:
+        predClassScores: (batchSize, 8400, nc)
+        predBboxes: (batchSize, 8400, 4)
+    
+    Returns:
+        List of tensors, each with shape (N, 6) where columns are [class, score, x1, y1, x2, y2]
+    """
+    batchSize = predClassScores.shape[0]
+    nc = predClassScores.shape[2]  # number of classes
+    device = predClassScores.device
+    outputList = [torch.zeros(0, 6).to(device)] * batchSize
+
+    for i in range(batchSize):
+        imgClassScores = predClassScores[i]  # (8400, nc)
+        imgBboxes = predBboxes[i]  # (8400, 4)
+        
+        # 存储所有类别的NMS结果
+        allClassResults = []
+        
+        # 对每个类别单独进行NMS
+        for classIdx in range(nc):
+            classScores = imgClassScores[:, classIdx]  # (8400,)
+            
+            # 过滤低置信度的预测
+            scoreMask = classScores > scoreThres
+            if not scoreMask.any():
+                continue
+                
+            # 提取该类别的有效预测
+            validScores = classScores[scoreMask]  # (N,)
+            validBboxes = imgBboxes[scoreMask]  # (N, 4)
+            
+            # 对该类别进行NMS
+            nmsIndices = torchvision.ops.nms(validBboxes, validScores, iouThres)
+            
+            if len(nmsIndices) > 0:
+                # 构建结果：[class, score, x1, y1, x2, y2]
+                classResults = torch.zeros(len(nmsIndices), 6, device=device)
+                classResults[:, 0] = classIdx  # class index
+                classResults[:, 1] = validScores[nmsIndices]  # scores
+                classResults[:, 2:6] = validBboxes[nmsIndices]  # bboxes
+                
+                allClassResults.append(classResults)
+        
+        # 合并所有类别的结果
+        if allClassResults:
+            combinedResults = torch.cat(allClassResults, dim=0)
+            
+            # 按置信度排序并限制检测数量
+            sortedIndices = torch.argsort(combinedResults[:, 1], descending=True)
+            combinedResults = combinedResults[sortedIndices[:maxDetect]]
+            
+            outputList[i] = combinedResults
+        else:
+            outputList[i] = torch.zeros(0, 6).to(device)
+
+    return outputList
