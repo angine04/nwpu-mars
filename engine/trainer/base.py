@@ -68,6 +68,12 @@ class MarsBaseTrainer(object):
 
         model = MarsModelFactory.loadNewModel(self.mcfg, self.mcfg.pretrainedBackboneUrl)
         return model, 0
+        # if self.mcfg.checkpointModelFile is not None: # use model from previous run, but start epoch from zero
+        #     model = MarsModelFactory.loadPretrainedModel(self.mcfg, self.mcfg.checkpointModelFile)
+        #     return model, 0
+
+        # model = MarsModelFactory.loadNewModel(self.mcfg, self.mcfg.pretrainedBackboneUrl)
+        # return model, 0
 
     def initLoss(self, model):
         return model.getTrainLoss()
